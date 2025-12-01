@@ -1,486 +1,874 @@
-// 渲染进程脚本
-// 通过预加载脚本获取版本信息
-// if (window.electronAPI && window.electronAPI.versions) {
-//   const versions = window.electronAPI.versions;
-//   document.getElementById('electron-version').textContent = versions.electron || 'N/A';
-//   document.getElementById('node-version').textContent = versions.node || 'N/A';
-//   document.getElementById('chrome-version').textContent = versions.chrome || 'N/A';
-// }
+const { useState, useEffect, useCallback, useRef } = React;
+const { 
+  Card, 
+  Tabs, 
+  Form, 
+  Input, 
+  Select, 
+  Button, 
+  Space, 
+  Table, 
+  Tag, 
+  Typography, 
+  Alert, 
+  Spin, 
+  Empty,
+  Row,
+  Col,
+  Divider,
+  Tooltip,
+  message
+} = antd;
+const { Title, Text, Paragraph } = Typography;
+const { Option } = Select;
+// 图标组件 - 使用 Ant Design Icons
+const IconComponent = ({ name, ...props }) => {
+  if (typeof icons !== 'undefined' && icons[name]) {
+    const Icon = icons[name];
+    return React.createElement(Icon, props);
+  }
+  // 备用图标
+  const iconMap = {
+    SearchOutlined: '🔍',
+    PlusOutlined: '➕',
+    DeleteOutlined: '🗑️',
+    ClearOutlined: '✕',
+    FileTextOutlined: '📄',
+    CalendarOutlined: '📅',
+    UserOutlined: '👤'
+  };
+  return <span {...props} style={{ display: 'inline-block', ...props.style }}>{iconMap[name] || '•'}</span>;
+};
 
-// 搜索功能 - 获取所有元素
-const simpleModeBtn = document.getElementById('simpleModeBtn');
-const advancedModeBtn = document.getElementById('advancedModeBtn');
-const simpleSearchForm = document.getElementById('simpleSearchForm');
-const advancedSearchForm = document.getElementById('advancedSearchForm');
-const maxResults = document.getElementById('maxResults');
-const advancedQuery = document.getElementById('advancedQuery');
-const advancedMaxResults = document.getElementById('advancedMaxResults');
-const startIndex = document.getElementById('startIndex');
-const simpleSearchBtn = document.getElementById('simpleSearchBtn');
-const advancedSearchBtn = document.getElementById('advancedSearchBtn');
-const clearBtn = document.getElementById('clearBtn');
-const advancedClearBtn = document.getElementById('advancedClearBtn');
-const addConditionBtn = document.querySelector('.add-condition-btn');
-const errorMessage = document.getElementById('errorMessage');
-const loadingMessage = document.getElementById('loadingMessage');
-const resultsContainer = document.getElementById('resultsContainer');
+const SearchOutlined = (props) => <IconComponent name="SearchOutlined" {...props} />;
+const PlusOutlined = (props) => <IconComponent name="PlusOutlined" {...props} />;
+const DeleteOutlined = (props) => <IconComponent name="DeleteOutlined" {...props} />;
+const ClearOutlined = (props) => <IconComponent name="ClearOutlined" {...props} />;
+const FileTextOutlined = (props) => <IconComponent name="FileTextOutlined" {...props} />;
+const CalendarOutlined = (props) => <IconComponent name="CalendarOutlined" {...props} />;
+const UserOutlined = (props) => <IconComponent name="UserOutlined" {...props} />;
 
-// 当前搜索模式
-let currentMode = 'simple';
-
-// 切换搜索模式
-function switchMode(mode) {
-  currentMode = mode;
+// 主应用组件
+function App() {
+  const [mode, setMode] = useState('simple');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [papers, setPapers] = useState([]);
+  const [sortType, setSortType] = useState('date-desc');
   
-  if (mode === 'simple') {
-    simpleModeBtn.classList.add('active');
-    advancedModeBtn.classList.remove('active');
-    simpleSearchForm.style.display = 'block';
-    advancedSearchForm.style.display = 'none';
-  } else {
-    simpleModeBtn.classList.remove('active');
-    advancedModeBtn.classList.add('active');
-    simpleSearchForm.style.display = 'none';
-    advancedSearchForm.style.display = 'block';
-  }
-}
+  // 简单搜索表单状态
+  const [simpleForm] = Form.useForm();
+  const [conditions, setConditions] = useState([
+    { id: 0, type: 'all', keyword: '', operator: 'AND' }
+  ]);
+  // 使用字符串状态，避免数字输入过程中类型转换导致的光标问题
+  const [maxResults, setMaxResults] = useState('10');
+  // 用于强制重置简单搜索输入框（例如清空时）
+  const [simpleVersion, setSimpleVersion] = useState(0);
+  
+  // 高级搜索表单状态
+  const [advancedForm] = Form.useForm();
+  // 高级搜索查询字符串（作为备份，不直接驱动 TextArea）
+  const [advancedQuery, setAdvancedQuery] = useState('');
+  // 使用字符串状态，避免数字输入过程中类型转换导致的光标问题
+  const [advancedMaxResults, setAdvancedMaxResults] = useState('10');
+  const [startIndex, setStartIndex] = useState('0');
+  // 用于强制重置高级搜索输入框
+  const [advancedVersion, setAdvancedVersion] = useState(0);
 
-// 绑定模式切换事件
-simpleModeBtn.addEventListener('click', () => switchMode('simple'));
-advancedModeBtn.addEventListener('click', () => switchMode('advanced'));
+  // 关键输入框的 ref
+  const simpleKeywordRefs = useRef({});
+  const advancedQueryRef = useRef(null);
+  const simpleMaxResultsRef = useRef(null);
+  const advancedMaxResultsRef = useRef(null);
+  const startIndexRef = useRef(null);
 
-// 构建简单搜索查询
-function buildSimpleQuery() {
-  const conditions = document.querySelectorAll('.search-condition');
-  if (conditions.length === 0) {
-    return null;
-  }
+  // 格式化日期
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+  };
 
-  let queryParts = [];
-  let operators = [];
+  // 构建简单搜索查询（直接从输入框 DOM 读取，避免受控输入导致的光标问题）
+  const buildSimpleQuery = () => {
+    const queryParts = [];
+    const operators = [];
 
-  conditions.forEach((condition, index) => {
-    const type = condition.querySelector('.condition-type').value;
-    const keyword = condition.querySelector('.condition-keyword').value.trim();
-    
-    // 跳过空关键词的条件
-    if (!keyword) {
+    conditions.forEach((condition, index) => {
+      const refEl = simpleKeywordRefs.current[condition.id];
+      const inputEl = refEl ? (refEl.input || refEl) : null;
+      const keyword = inputEl ? inputEl.value : (condition.keyword || '');
+      const trimmed = (keyword || '').trim();
+      if (!trimmed) {
+        return;
+      }
+
+      let conditionQuery = '';
+      if (condition.type === 'all') {
+        conditionQuery = trimmed;
+      } else {
+        conditionQuery = `${condition.type}:${trimmed}`;
+      }
+      queryParts.push(conditionQuery);
+
+      if (index > 0) {
+        operators.push(condition.operator);
+      }
+    });
+
+    if (queryParts.length === 0) {
+      return null;
+    }
+
+    let query = queryParts[0];
+    for (let i = 0; i < operators.length; i++) {
+      query += ` ${operators[i]} ${queryParts[i + 1]}`;
+    }
+
+    return query;
+  };
+
+  // 获取 arXiv 论文数据
+  const fetchArxivPapers = async (searchQuery, start = 0, maxResults = 10) => {
+    try {
+      const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=${start}&max_results=${maxResults}`;
+      const response = await fetch(url);
+      const xmlText = await response.text();
+
+      // 先处理 HTTP 状态码
+      if (!response.ok) {
+        // 503 一般是频率限制
+        if (response.status === 503 || /Rate exceeded/i.test(xmlText)) {
+          console.error('arXiv 503 / Rate exceeded 响应：', xmlText);
+          return {
+            success: false,
+            error: 'arXiv 接口返回 503：请求频率过高（Rate exceeded），请稍后再试或减少短时间内的请求次数。',
+            papers: [],
+            raw: xmlText
+          };
+        }
+
+        console.error(`arXiv HTTP 错误 ${response.status}：`, xmlText);
+        return {
+          success: false,
+          error: `arXiv HTTP 错误 ${response.status}：请稍后重试。`,
+          papers: [],
+          raw: xmlText
+        };
+      }
+
+      // 正常情况下解析 XML
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+
+      const parseError = xmlDoc.querySelector('parsererror');
+      if (parseError) {
+        console.error('arXiv XML 解析失败，原始响应：', xmlText);
+        return {
+          success: false,
+          error: 'XML 解析错误（arXiv 返回的内容不是合法 XML，可能是网络或请求格式问题）',
+          papers: [],
+          raw: xmlText
+        };
+      }
+      
+      const entries = xmlDoc.querySelectorAll('entry');
+      const papers = [];
+      
+      entries.forEach(entry => {
+        const id = entry.querySelector('id')?.textContent || '';
+        const title = entry.querySelector('title')?.textContent?.trim() || '';
+        const summary = entry.querySelector('summary')?.textContent?.trim() || '';
+        const published = entry.querySelector('published')?.textContent || '';
+        const updated = entry.querySelector('updated')?.textContent || '';
+        
+        const authors = Array.from(entry.querySelectorAll('author name')).map(author => author.textContent);
+        const categories = Array.from(entry.querySelectorAll('category')).map(cat => cat.getAttribute('term'));
+        const links = Array.from(entry.querySelectorAll('link')).map(link => ({
+          href: link.getAttribute('href'),
+          rel: link.getAttribute('rel'),
+          type: link.getAttribute('type')
+        }));
+        
+        papers.push({
+          id: id.replace('http://arxiv.org/abs/', ''),
+          title,
+          summary,
+          published,
+          updated,
+          authors,
+          categories,
+          links
+        });
+      });
+      
+      return {
+        success: true,
+        papers,
+        total: papers.length
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        papers: []
+      };
+    }
+  };
+
+  // 排序论文
+  const sortPapers = (papers, sortType) => {
+    if (!papers || papers.length === 0) {
+      return papers;
+    }
+
+    const sortedPapers = [...papers];
+
+    switch (sortType) {
+      case 'date-desc':
+        sortedPapers.sort((a, b) => new Date(b.published || 0) - new Date(a.published || 0));
+        break;
+      case 'date-asc':
+        sortedPapers.sort((a, b) => new Date(a.published || 0) - new Date(b.published || 0));
+        break;
+      case 'title-asc':
+        sortedPapers.sort((a, b) => (a.title || '').toLowerCase().localeCompare((b.title || '').toLowerCase()));
+        break;
+      case 'title-desc':
+        sortedPapers.sort((a, b) => (b.title || '').toLowerCase().localeCompare((a.title || '').toLowerCase()));
+        break;
+      case 'author-asc':
+        sortedPapers.sort((a, b) => {
+          const authorA = (a.authors && a.authors.length > 0) ? a.authors[0].toLowerCase() : '';
+          const authorB = (b.authors && b.authors.length > 0) ? b.authors[0].toLowerCase() : '';
+          return authorA.localeCompare(authorB);
+        });
+        break;
+      case 'author-desc':
+        sortedPapers.sort((a, b) => {
+          const authorA = (a.authors && a.authors.length > 0) ? a.authors[0].toLowerCase() : '';
+          const authorB = (b.authors && b.authors.length > 0) ? b.authors[0].toLowerCase() : '';
+          return authorB.localeCompare(authorA);
+        });
+        break;
+      case 'updated-desc':
+        sortedPapers.sort((a, b) => new Date(b.updated || b.published || 0) - new Date(a.updated || a.published || 0));
+        break;
+      case 'updated-asc':
+        sortedPapers.sort((a, b) => new Date(a.updated || a.published || 0) - new Date(b.updated || b.published || 0));
+        break;
+      default:
+        break;
+    }
+
+    return sortedPapers;
+  };
+
+  // 处理简单搜索
+  const handleSimpleSearch = async () => {
+    // 在任何状态更新之前，先快照当前所有关键词输入框的内容
+    const keywordSnapshot = {};
+    conditions.forEach((condition) => {
+      const refEl = simpleKeywordRefs.current[condition.id];
+      const inputEl = refEl ? (refEl.input || refEl) : null;
+      if (inputEl) {
+        keywordSnapshot[condition.id] = inputEl.value;
+      }
+    });
+
+    const query = buildSimpleQuery();
+    if (!query) {
+      message.error('请输入搜索关键词');
       return;
     }
 
-    // 构建当前条件的查询部分
-    let conditionQuery = '';
-    if (type === 'all') {
-      conditionQuery = keyword;
-    } else {
-      conditionQuery = `${type}:${keyword}`;
-    }
-
-    queryParts.push(conditionQuery);
-
-    // 从第二个条件开始，获取操作符用于连接前一个条件
-    // 第一个条件（index === 0）不需要操作符
-    if (index > 0) {
-      const operatorElement = condition.querySelector('.condition-operator');
-      if (operatorElement) {
-        const operator = operatorElement.value;
-        operators.push(operator);
+    // 从 DOM 中读取结果数量，避免受控输入影响光标
+    let max = 10;
+    if (simpleMaxResultsRef.current) {
+      const el = simpleMaxResultsRef.current.input || simpleMaxResultsRef.current;
+      const raw = el.value;
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        max = parsed;
       }
     }
-  });
 
-  if (queryParts.length === 0) {
-    return null;
-  }
+    setError(null);
+    setLoading(true);
+    setPapers([]);
 
-  // 组合查询
-  let query = queryParts[0];
-  for (let i = 0; i < operators.length; i++) {
-    query += ` ${operators[i]} ${queryParts[i + 1]}`;
-  }
+    try {
+      const result = await fetchArxivPapers(query, 0, max);
+      setLoading(false);
 
-  return query;
-}
+      if (result.success) {
+        setPapers(result.papers);
+        if (result.papers.length === 0) {
+          message.info('未找到相关论文');
+        } else {
+          message.success(`找到 ${result.papers.length} 篇论文`);
+        }
+      } else {
+        setError(`搜索失败: ${result.error || '未知错误'}`);
+        message.error(`搜索失败: ${result.error || '未知错误'}`);
+      }
+    } catch (error) {
+      setLoading(false);
+      setError(`发生错误: ${error.message}`);
+      message.error(`发生错误: ${error.message}`);
+    }
 
-// 添加搜索条件
-function addSearchCondition() {
-  const container = document.getElementById('searchConditionsContainer');
-  const conditions = container.querySelectorAll('.search-condition');
-  const index = conditions.length;
+    // 搜索完成后，将关键词文本恢复到输入框中（防止渲染导致被清空）
+    Object.keys(keywordSnapshot).forEach((id) => {
+      const refEl = simpleKeywordRefs.current[id];
+      const inputEl = refEl ? (refEl.input || refEl) : null;
+      if (inputEl && typeof keywordSnapshot[id] === 'string') {
+        inputEl.value = keywordSnapshot[id];
+      }
+    });
+  };
 
-  const conditionDiv = document.createElement('div');
-  conditionDiv.className = 'search-condition';
-  conditionDiv.setAttribute('data-index', index);
+  // 处理高级搜索
+  const handleAdvancedSearch = async () => {
+    // 在任何状态更新之前，先快照当前 TextArea 文本
+    let querySnapshot = '';
+    if (advancedQueryRef.current) {
+      const el = advancedQueryRef.current.resizableTextArea
+        ? advancedQueryRef.current.resizableTextArea.textArea
+        : advancedQueryRef.current;
+      if (el) {
+        querySnapshot = el.value || '';
+      }
+    }
 
-  conditionDiv.innerHTML = `
-    <div class="condition-row">
-      <div class="form-group" style="flex: 0 0 150px;">
-        <label>搜索类型</label>
-        <select class="condition-type">
-          <option value="all">全部字段</option>
-          <option value="ti">标题</option>
-          <option value="au">作者</option>
-          <option value="abs">摘要</option>
-          <option value="co">评论</option>
-          <option value="jr">期刊参考</option>
-          <option value="cat">分类</option>
-          <option value="rn">报告编号</option>
-          <option value="id">ID</option>
-        </select>
-      </div>
-      <div class="form-group" style="flex: 1;">
-        <label>关键词</label>
-        <input 
-          type="text" 
-          class="search-input condition-keyword" 
-          placeholder="输入搜索关键词"
+    // 从 DOM 中读取高级查询文本
+    let query = querySnapshot || advancedQuery;
+    query = (query || '').trim();
+    if (!query) {
+      message.error('请输入搜索查询');
+      return;
+    }
+
+    // 从 DOM 中读取结果数量和起始位置
+    let max = 10;
+    if (advancedMaxResultsRef.current) {
+      const el = advancedMaxResultsRef.current.input || advancedMaxResultsRef.current;
+      const raw = el.value;
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        max = parsed;
+      }
+    }
+
+    let start = 0;
+    if (startIndexRef.current) {
+      const el = startIndexRef.current.input || startIndexRef.current;
+      const raw = el.value;
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed >= 0) {
+        start = parsed;
+      }
+    }
+
+    setError(null);
+    setLoading(true);
+    setPapers([]);
+
+    try {
+      const result = await fetchArxivPapers(query, start, max);
+      setLoading(false);
+
+      if (result.success) {
+        setPapers(result.papers);
+        if (result.papers.length === 0) {
+          message.info('未找到相关论文');
+        } else {
+          message.success(`找到 ${result.papers.length} 篇论文`);
+        }
+      } else {
+        setError(`搜索失败: ${result.error || '未知错误'}`);
+        message.error(`搜索失败: ${result.error || '未知错误'}`);
+      }
+    } catch (error) {
+      setLoading(false);
+      setError(`发生错误: ${error.message}`);
+      message.error(`发生错误: ${error.message}`);
+    }
+
+    // 搜索完成后，将 TextArea 文本恢复（防止渲染导致被清空）
+    if (advancedQueryRef.current && typeof querySnapshot === 'string') {
+      const el = advancedQueryRef.current.resizableTextArea
+        ? advancedQueryRef.current.resizableTextArea.textArea
+        : advancedQueryRef.current;
+      if (el) {
+        el.value = querySnapshot;
+      }
+    }
+  };
+
+  // 添加搜索条件
+  const addCondition = () => {
+    const newId = conditions.length > 0 ? Math.max(...conditions.map(c => c.id)) + 1 : 0;
+    setConditions([...conditions, { id: newId, type: 'all', keyword: '', operator: 'AND' }]);
+  };
+
+  // 删除搜索条件
+  const removeCondition = (id) => {
+    if (conditions.length === 1) {
+      message.warning('至少需要保留一个搜索条件');
+      return;
+    }
+    setConditions(conditions.filter(c => c.id !== id));
+  };
+
+  // 更新条件 - 使用 useCallback 稳定函数引用，避免不必要的重新渲染
+  const updateCondition = useCallback((id, field, value) => {
+    setConditions(prevConditions => 
+      prevConditions.map(c => 
+        c.id === id ? { ...c, [field]: value } : c
+      )
+    );
+  }, []);
+
+  // 处理数字输入 - 使用 useCallback 稳定函数引用
+  const handleNumberChange = useCallback((setter, defaultValue) => {
+    return (e) => {
+      const value = e.target.value;
+      if (value === '' || value === null || value === undefined) {
+        setter(defaultValue);
+      } else {
+        const numValue = parseInt(value);
+        if (!isNaN(numValue)) {
+          setter(numValue);
+        } else {
+          // 如果解析失败，保持当前值不变，允许用户继续输入
+          setter(value);
+        }
+      }
+    };
+  }, []);
+
+  // 清空简单搜索
+  const clearSimpleSearch = () => {
+    setConditions([{ id: 0, type: 'all', keyword: '', operator: 'AND' }]);
+    setMaxResults('10');
+    // 增加版本号，强制重置输入框（避免受控输入造成的光标问题）
+    setSimpleVersion(v => v + 1);
+    setPapers([]);
+    setError(null);
+    message.info('已清空搜索条件');
+  };
+
+  // 清空高级搜索
+  const clearAdvancedSearch = () => {
+    setAdvancedQuery('');
+    setAdvancedMaxResults('10');
+    setStartIndex('0');
+    // 增加版本号，强制重置输入框
+    setAdvancedVersion(v => v + 1);
+    setPapers([]);
+    setError(null);
+    message.info('已清空搜索条件');
+  };
+
+  // 获取排序后的论文
+  const sortedPapers = sortPapers(papers, sortType);
+
+  // 简单搜索表单
+  const SimpleSearchForm = () => (
+    <Form form={simpleForm} layout="vertical">
+      <Space direction="vertical" style={{ width: '100%' }} size="large">
+        {conditions.map((condition, index) => (
+          <Card 
+            key={`${condition.id}-${simpleVersion}`} 
+            className="condition-card"
+            size="small"
+            title={index === 0 ? '搜索条件' : `条件 ${index + 1}`}
+            extra={
+              conditions.length > 1 && index > 0 && (
+                <Button
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => removeCondition(condition.id)}
+                >
+                  删除
+                </Button>
+              )
+            }
+          >
+            <Row gutter={16}>
+              <Col span={6}>
+                <Form.Item label="搜索类型">
+                  <Select
+                    value={condition.type}
+                    onChange={(value) => updateCondition(condition.id, 'type', value)}
+                  >
+                    <Option value="all">全部字段</Option>
+                    <Option value="ti">标题</Option>
+                    <Option value="au">作者</Option>
+                    <Option value="abs">摘要</Option>
+                    <Option value="co">评论</Option>
+                    <Option value="jr">期刊参考</Option>
+                    <Option value="cat">分类</Option>
+                    <Option value="rn">报告编号</Option>
+                    <Option value="id">ID</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={index === 0 ? 18 : 12}>
+                <Form.Item label="关键词">
+                  <Input
+                    // 使用 ref 保存 DOM 引用，构建查询时直接读取 value
+                    key={`keyword-input-${condition.id}-${simpleVersion}`}
+                    defaultValue={condition.keyword}
+                    ref={(el) => {
+                      if (el) {
+                        simpleKeywordRefs.current[condition.id] = el;
+                      }
+                    }}
+                    placeholder="输入搜索关键词"
+                    allowClear
+                  />
+                </Form.Item>
+              </Col>
+              {index > 0 && (
+                <Col span={6}>
+                  <Form.Item label="逻辑关系">
+                    <Select
+                      value={condition.operator}
+                      onChange={(value) => updateCondition(condition.id, 'operator', value)}
+                    >
+                      <Option value="AND">AND</Option>
+                      <Option value="OR">OR</Option>
+                      <Option value="ANDNOT">NOT</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+              )}
+            </Row>
+          </Card>
+        ))}
+
+        <Button
+          type="dashed"
+          onClick={addCondition}
+          icon={<PlusOutlined />}
+          block
         >
-      </div>
-      <div class="form-group condition-operator-group" style="flex: 0 0 100px;">
-        <label>逻辑关系</label>
-        <select class="condition-operator">
-          <option value="AND">AND</option>
-          <option value="OR">OR</option>
-          <option value="ANDNOT">NOT</option>
-        </select>
-      </div>
-      <button type="button" class="remove-condition-btn" style="margin-top: 25px; padding: 10px 15px; background: #f44336; color: white; border: none; border-radius: 6px; cursor: pointer;">删除</button>
-    </div>
-  `;
+          添加条件
+        </Button>
 
-  container.appendChild(conditionDiv);
+        <Row gutter={16}>
+          <Col span={8}>
+            <Form.Item label="结果数量">
+              <Input
+                key={`simple-max-results-${simpleVersion}`}
+                type="number"
+                min={1}
+                max={100}
+                defaultValue={maxResults}
+                ref={simpleMaxResultsRef}
+                onBlur={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 1) {
+                    const el = simpleMaxResultsRef.current
+                      ? (simpleMaxResultsRef.current.input || simpleMaxResultsRef.current)
+                      : e.target;
+                    if (el) {
+                      el.value = '10';
+                    }
+                  }
+                }}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
 
-  // 绑定删除按钮事件
-  const removeBtn = conditionDiv.querySelector('.remove-condition-btn');
-  removeBtn.addEventListener('click', () => {
-    conditionDiv.remove();
-    updateRemoveButtons();
-  });
+        <Space>
+          <Button
+            type="primary"
+            icon={<SearchOutlined />}
+            onClick={handleSimpleSearch}
+            loading={loading}
+            size="large"
+          >
+            搜索
+          </Button>
+          <Button
+            icon={<ClearOutlined />}
+            onClick={clearSimpleSearch}
+            size="large"
+          >
+            清空
+          </Button>
+        </Space>
+      </Space>
+    </Form>
+  );
 
-  updateRemoveButtons();
-}
+  // 高级搜索表单
+  const AdvancedSearchForm = () => (
+    <Form form={advancedForm} layout="vertical">
+      <Space direction="vertical" style={{ width: '100%' }} size="large">
+        <Form.Item label="arXiv 搜索查询语法">
+          <Input.TextArea
+            key={`advanced-query-textarea-${advancedVersion}`}
+            defaultValue={advancedQuery}
+            ref={advancedQueryRef}
+            placeholder="例如: ti:LLM AND cat:cs.AI OR au:Smith"
+            rows={3}
+            allowClear
+          />
+          <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: '4px' }}>
+            支持语法: ti:(标题), au:(作者), abs:(摘要), cat:(分类), AND, OR, NOT, +, -<br />
+            示例: ti:LLM AND cat:cs.AI | all:design ANDNOT cat:math
+          </Text>
+        </Form.Item>
 
-// 更新删除按钮和逻辑关系选择框显示状态
-function updateRemoveButtons() {
-  const conditions = document.querySelectorAll('.search-condition');
-  conditions.forEach((condition, index) => {
-    const removeBtn = condition.querySelector('.remove-condition-btn');
-    const operatorGroup = condition.querySelector('.condition-operator-group');
-    
-    // 更新删除按钮显示状态
-    if (removeBtn) {
-      // 如果只有一个条件，隐藏删除按钮；否则显示
-      if (conditions.length === 1) {
-        removeBtn.style.display = 'none';
-      } else {
-        removeBtn.style.display = 'block';
-      }
-    }
-    
-    // 更新逻辑关系选择框显示状态
-    if (operatorGroup) {
-      // 第一个条件（index === 0）隐藏逻辑关系选择框，其他条件显示
-      if (index === 0) {
-        operatorGroup.style.display = 'none';
-      } else {
-        operatorGroup.style.display = 'block';
-      }
-    }
-  });
-}
+        <Row gutter={16}>
+          <Col span={8}>
+            <Form.Item label="结果数量">
+              <Input
+                key={`advanced-max-results-${advancedVersion}`}
+                type="number"
+                min={1}
+                max={100}
+                defaultValue={advancedMaxResults}
+                ref={advancedMaxResultsRef}
+                onBlur={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 1) {
+                    const el = advancedMaxResultsRef.current
+                      ? (advancedMaxResultsRef.current.input || advancedMaxResultsRef.current)
+                      : e.target;
+                    if (el) {
+                      el.value = '10';
+                    }
+                  }
+                }}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label="起始位置">
+              <Input
+                key={`start-index-${advancedVersion}`}
+                type="number"
+                min={0}
+                defaultValue={startIndex}
+                ref={startIndexRef}
+                onBlur={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 0) {
+                    const el = startIndexRef.current
+                      ? (startIndexRef.current.input || startIndexRef.current)
+                      : e.target;
+                    if (el) {
+                      el.value = '0';
+                    }
+                  }
+                }}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
 
-// 格式化日期
-function formatDate(dateString) {
-  if (!dateString) return 'N/A';
-  const date = new Date(dateString);
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-}
+        <Space>
+          <Button
+            type="primary"
+            icon={<SearchOutlined />}
+            onClick={handleAdvancedSearch}
+            loading={loading}
+            size="large"
+          >
+            搜索
+          </Button>
+          <Button
+            icon={<ClearOutlined />}
+            onClick={clearAdvancedSearch}
+            size="large"
+          >
+            清空
+          </Button>
+        </Space>
+      </Space>
+    </Form>
+  );
 
-// 渲染论文表格
-function renderPapersTable(papers) {
-  if (!papers || papers.length === 0) {
-    resultsContainer.innerHTML = '<div class="no-results">未找到相关论文</div>';
-    return;
-  }
-
-  let html = '<table class="papers-table">';
-  html += '<thead><tr>';
-  html += '<th style="width: 20%;">标题</th>';
-  html += '<th style="width: 15%;">作者</th>';
-  html += '<th style="width: 12%;">发布日期</th>';
-  html += '<th style="width: 38%;">摘要</th>';
-  html += '<th style="width: 15%;">查看链接</th>';
-  html += '</tr></thead>';
-  html += '<tbody>';
-
-  papers.forEach(paper => {
+  // 论文卡片组件
+  const PaperCard = ({ paper }) => {
     const pdfLink = paper.links.find(link => link.type === 'application/pdf')?.href || 
                    paper.links.find(link => link.rel === 'related')?.href || 
                    `https://arxiv.org/abs/${paper.id}`;
-    
-    html += '<tr>';
-    
-    // 标题列
-    html += '<td>';
-    html += `<div class="paper-title">${escapeHtml(paper.title)}</div>`;
-    html += `<div class="paper-id">ID: ${paper.id}</div>`;
-    html += '</td>';
-    
-    // 作者列
-    html += '<td>';
-    if (paper.authors && paper.authors.length > 0) {
-      html += `<div class="paper-authors">${escapeHtml(paper.authors.join(', '))}</div>`;
-    } else {
-      html += '<div class="paper-authors">N/A</div>';
+
+    return (
+      <Card 
+        className="paper-card" 
+        hoverable
+        actions={[
+          <Button 
+            type="link" 
+            href={pdfLink} 
+            target="_blank"
+            icon={<FileTextOutlined />}
+            key="view"
+          >
+            查看论文
+          </Button>
+        ]}
+      >
+        <div 
+          className="paper-title" 
+          onClick={() => window.open(pdfLink, '_blank')}
+          style={{ cursor: 'pointer' }}
+        >
+          <FileTextOutlined style={{ marginRight: 8, color: '#667eea' }} />
+          {paper.title}
+        </div>
+        <div className="paper-meta" style={{ marginTop: 12, marginBottom: 12 }}>
+          <Space size="middle" wrap>
+            <span>
+              <UserOutlined style={{ marginRight: 4, color: '#1890ff' }} />
+              <Text type="secondary">
+                {paper.authors && paper.authors.length > 0 
+                  ? paper.authors.slice(0, 3).join(', ') + (paper.authors.length > 3 ? '...' : '')
+                  : 'N/A'}
+              </Text>
+            </span>
+            <span>
+              <CalendarOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+              <Text type="secondary">{formatDate(paper.published)}</Text>
+            </span>
+            <Text type="secondary" style={{ fontSize: '0.85em' }}>
+              ID: {paper.id}
+            </Text>
+          </Space>
+        </div>
+        {paper.categories && paper.categories.length > 0 && (
+          <div className="paper-categories" style={{ marginBottom: 12 }}>
+            <Space size={[0, 8]} wrap>
+              {paper.categories.map((cat, idx) => (
+                <Tag key={idx} color="blue">{cat}</Tag>
+              ))}
+            </Space>
+          </div>
+        )}
+        <Paragraph 
+          className="paper-summary" 
+          ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}
+          style={{ marginBottom: 0 }}
+        >
+          {paper.summary || '无摘要'}
+        </Paragraph>
+      </Card>
+    );
+  };
+
+  // 结果展示
+  const ResultsDisplay = () => {
+    if (loading) {
+      return (
+        <div className="loading-container">
+          <Spin size="large" />
+          <div className="loading-text">正在搜索论文...</div>
+        </div>
+      );
     }
-    html += '</td>';
-    
-    // 发布日期列
-    html += `<td>${formatDate(paper.published)}</td>`;
-    
-    // 摘要列
-    html += '<td>';
-    if (paper.summary) {
-      html += `<div class="paper-summary">${escapeHtml(paper.summary)}</div>`;
-    } else {
-      html += '<div class="paper-summary">无摘要</div>';
+
+    if (error) {
+      return (
+        <Alert
+          message="搜索错误"
+          description={error}
+          type="error"
+          showIcon
+          closable
+          onClose={() => setError(null)}
+        />
+      );
     }
-    html += '</td>';
-    
-    // 查看链接列
-    html += '<td>';
-    html += `<a href="${pdfLink}" target="_blank" class="paper-link">查看</a>`;
-    html += '</td>';
-    
-    html += '</tr>';
-  });
 
-  html += '</tbody></table>';
-  resultsContainer.innerHTML = html;
-}
-
-// HTML 转义
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-// 获取 arXiv 论文数据
-async function fetchArxivPapers(searchQuery, start = 0, maxResults = 10) {
-  try {
-    const url = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=${start}&max_results=${maxResults}`;
-    const response = await fetch(url);
-    const xmlText = await response.text();
-    
-    // 解析 XML 数据
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-    
-    // 检查是否有错误
-    const parseError = xmlDoc.querySelector('parsererror');
-    if (parseError) {
-      throw new Error('XML 解析错误');
+    if (papers.length === 0) {
+      return (
+        <Empty
+          description="暂无搜索结果"
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+        />
+      );
     }
-    
-    // 提取论文数据
-    const entries = xmlDoc.querySelectorAll('entry');
-    const papers = [];
-    
-    entries.forEach(entry => {
-      const id = entry.querySelector('id')?.textContent || '';
-      const title = entry.querySelector('title')?.textContent?.trim() || '';
-      const summary = entry.querySelector('summary')?.textContent?.trim() || '';
-      const published = entry.querySelector('published')?.textContent || '';
-      const updated = entry.querySelector('updated')?.textContent || '';
-      
-      // 提取作者
-      const authors = Array.from(entry.querySelectorAll('author name')).map(author => author.textContent);
-      
-      // 提取分类
-      const categories = Array.from(entry.querySelectorAll('category')).map(cat => cat.getAttribute('term'));
-      
-      // 提取链接
-      const links = Array.from(entry.querySelectorAll('link')).map(link => ({
-        href: link.getAttribute('href'),
-        rel: link.getAttribute('rel'),
-        type: link.getAttribute('type')
-      }));
-      
-      papers.push({
-        id: id.replace('http://arxiv.org/abs/', ''),
-        title,
-        summary,
-        published,
-        updated,
-        authors,
-        categories,
-        links
-      });
-    });
-    
-    return {
-      success: true,
-      papers,
-      total: papers.length
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message,
-      papers: []
-    };
-  }
+
+    return (
+      <div>
+        <div className="results-header">
+          <div className="results-count">
+            <Text strong style={{ fontSize: '1.1em', color: '#667eea' }}>
+              {papers.length}
+            </Text>
+            <Text style={{ marginLeft: 4 }}>篇论文</Text>
+          </div>
+          <Space>
+            <Text type="secondary">排序方式：</Text>
+            <Select
+              value={sortType}
+              onChange={setSortType}
+              style={{ width: 200 }}
+            >
+              <Option value="date-desc">发布日期（最新优先）</Option>
+              <Option value="date-asc">发布日期（最早优先）</Option>
+              <Option value="title-asc">标题（A-Z）</Option>
+              <Option value="title-desc">标题（Z-A）</Option>
+              <Option value="author-asc">作者（A-Z）</Option>
+              <Option value="author-desc">作者（Z-A）</Option>
+              <Option value="updated-desc">更新时间（最新优先）</Option>
+              <Option value="updated-asc">更新时间（最早优先）</Option>
+            </Select>
+          </Space>
+        </div>
+        <Divider />
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          {sortedPapers.map((paper, index) => (
+            <PaperCard key={paper.id || index} paper={paper} />
+          ))}
+        </Space>
+      </div>
+    );
+  };
+
+  return (
+    <div className="app-container">
+      <div className="app-header">
+        <Title level={2} className="app-title">
+          🎨 Design Thesis Retrieval
+        </Title>
+        <Text className="app-subtitle">欢迎使用设计论文检索应用</Text>
+      </div>
+
+      <div className="search-section">
+        <Tabs
+          activeKey={mode}
+          onChange={setMode}
+        >
+          <Tabs.TabPane tab="简单搜索" key="simple">
+            <SimpleSearchForm />
+          </Tabs.TabPane>
+          <Tabs.TabPane tab="高级搜索" key="advanced">
+            <AdvancedSearchForm />
+          </Tabs.TabPane>
+        </Tabs>
+      </div>
+
+      <Divider />
+
+      <ResultsDisplay />
+    </div>
+  );
 }
 
-// 处理简单搜索
-async function handleSimpleSearch(event) {
-  event.preventDefault();
-  
-  const query = buildSimpleQuery();
-  if (!query) {
-    showError('请输入搜索关键词');
-    return;
-  }
-
-  const max = parseInt(maxResults.value) || 10;
-  
-  // 显示加载状态
-  errorMessage.style.display = 'none';
-  loadingMessage.style.display = 'block';
-  resultsContainer.innerHTML = '';
-  simpleSearchBtn.disabled = true;
-
-  try {
-    const result = await fetchArxivPapers(query, 0, max);
-    
-    loadingMessage.style.display = 'none';
-    simpleSearchBtn.disabled = false;
-
-    if (result.success) {
-      renderPapersTable(result.papers);
-    } else {
-      showError(`搜索失败: ${result.error || '未知错误'}`);
-    }
-  } catch (error) {
-    loadingMessage.style.display = 'none';
-    simpleSearchBtn.disabled = false;
-    showError(`发生错误: ${error.message}`);
-  }
-}
-
-// 处理高级搜索
-async function handleAdvancedSearch(event) {
-  event.preventDefault();
-  
-  const query = advancedQuery.value.trim();
-  if (!query) {
-    showError('请输入搜索查询');
-    return;
-  }
-
-  const max = parseInt(advancedMaxResults.value) || 10;
-  const start = parseInt(startIndex.value) || 0;
-  
-  // 显示加载状态
-  errorMessage.style.display = 'none';
-  loadingMessage.style.display = 'block';
-  resultsContainer.innerHTML = '';
-  advancedSearchBtn.disabled = true;
-
-  try {
-    const result = await fetchArxivPapers(query, start, max);
-    
-    loadingMessage.style.display = 'none';
-    advancedSearchBtn.disabled = false;
-
-    if (result.success) {
-      renderPapersTable(result.papers);
-    } else {
-      showError(`搜索失败: ${result.error || '未知错误'}`);
-    }
-  } catch (error) {
-    loadingMessage.style.display = 'none';
-    advancedSearchBtn.disabled = false;
-    showError(`发生错误: ${error.message}`);
-  }
-}
-
-// 清空简单搜索表单
-function clearSimpleForm() {
-  const container = document.getElementById('searchConditionsContainer');
-  // 保留第一个条件，清空其他条件
-  const conditions = container.querySelectorAll('.search-condition');
-  conditions.forEach((condition, index) => {
-    if (index === 0) {
-      // 清空第一个条件的输入
-      condition.querySelector('.condition-keyword').value = '';
-      condition.querySelector('.condition-type').value = 'all';
-      condition.querySelector('.condition-operator').value = 'AND';
-    } else {
-      // 删除其他条件
-      condition.remove();
-    }
-  });
-  maxResults.value = '10';
-  resultsContainer.innerHTML = '';
-  errorMessage.style.display = 'none';
-  updateRemoveButtons();
-}
-
-// 清空高级搜索表单
-function clearAdvancedForm() {
-  advancedQuery.value = '';
-  advancedMaxResults.value = '10';
-  startIndex.value = '0';
-  resultsContainer.innerHTML = '';
-  errorMessage.style.display = 'none';
-}
-
-// 显示错误信息
-function showError(message) {
-  errorMessage.textContent = message;
-  errorMessage.style.display = 'block';
-  errorMessage.className = 'error';
-}
-
-// 绑定搜索表单提交事件
-simpleSearchForm.addEventListener('submit', handleSimpleSearch);
-advancedSearchForm.addEventListener('submit', handleAdvancedSearch);
-
-// 绑定清空按钮
-clearBtn.addEventListener('click', clearSimpleForm);
-advancedClearBtn.addEventListener('click', clearAdvancedForm);
-
-// 绑定添加条件按钮
-if (addConditionBtn) {
-  addConditionBtn.addEventListener('click', addSearchCondition);
-}
-
-// 初始化：绑定第一个条件的删除按钮（如果有）
-document.addEventListener('DOMContentLoaded', () => {
-  updateRemoveButtons();
-  
-  // 绑定第一个条件的删除按钮（如果存在）
-  const firstCondition = document.querySelector('.search-condition');
-  if (firstCondition) {
-    const removeBtn = firstCondition.querySelector('.remove-condition-btn');
-    if (removeBtn) {
-      removeBtn.addEventListener('click', () => {
-        // 如果只有一个条件，清空它而不是删除
-        const conditions = document.querySelectorAll('.search-condition');
-        if (conditions.length === 1) {
-          firstCondition.querySelector('.condition-keyword').value = '';
-        } else {
-          firstCondition.remove();
-        }
-        updateRemoveButtons();
-      });
-    }
-  }
-});
-
+// 渲染应用
+ReactDOM.render(<App />, document.getElementById('root'));

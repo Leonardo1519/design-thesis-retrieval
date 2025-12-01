@@ -34,10 +34,10 @@ function createWindow() {
 
   mainWindow.loadFile('index.html');
   
-  // 开发环境下自动打开开发者工具
-  if (isDev) {
-    mainWindow.webContents.openDevTools();
-  }
+  // 开发环境下自动打开开发者工具（已禁用）
+  // if (isDev) {
+  //   mainWindow.webContents.openDevTools();
+  // }
 }
 
 app.whenReady().then(() => {

@@ -3,8 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self' http://export.arxiv.org;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net; font-src 'self' https://unpkg.com https://cdn.jsdelivr.net; connect-src 'self' https://export.arxiv.org;">
   <title>Design Thesis Retrieval</title>
+  
+  <!-- Ant Design CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/antd@4.24.15/dist/antd.min.css">
+  
   <style>
     * {
       margin: 0;
@@ -15,425 +19,277 @@
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: #333;
-      display: flex;
-      justify-content: center;
-      align-items: center;
       min-height: 100vh;
       padding: 20px;
     }
 
-    .container {
+    #root {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: calc(100vh - 40px);
+    }
+
+    .app-container {
       background: white;
       border-radius: 20px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
       padding: 40px;
-      max-width: 900px;
+      max-width: 1200px;
       width: 100%;
-      text-align: center;
+      max-height: calc(100vh - 40px);
+      overflow-y: auto;
     }
 
-    h1 {
+    .app-header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .app-title {
       color: #667eea;
       margin-bottom: 10px;
       font-size: 2.5em;
+      font-weight: 600;
     }
 
-    p {
+    .app-subtitle {
       color: #666;
       font-size: 1.1em;
-      line-height: 1.6;
-      margin-top: 20px;
-    }
-
-    .info {
-      margin-top: 30px;
-      padding: 20px;
-      background: #f5f5f5;
-      border-radius: 10px;
-      font-size: 0.9em;
-      color: #555;
     }
 
     .search-section {
       margin-top: 30px;
-      text-align: left;
     }
 
-    .search-mode-toggle {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 20px;
-      border-bottom: 2px solid #eee;
-      padding-bottom: 10px;
+    .condition-card {
+      margin-bottom: 16px;
+      border-radius: 8px;
     }
 
-    .mode-btn {
-      padding: 8px 20px;
-      background: transparent;
-      border: 2px solid #ddd;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.9em;
-      transition: all 0.3s;
-      color: #666;
+    .paper-card {
+      margin-bottom: 16px;
+      border-radius: 8px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      border: 1px solid #f0f0f0;
     }
 
-    .mode-btn.active {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
+    .paper-card:hover {
+      box-shadow: 0 8px 24px rgba(102, 126, 234, 0.2);
+      transform: translateY(-4px);
       border-color: #667eea;
-    }
-
-    .mode-btn:hover {
-      border-color: #667eea;
-      color: #667eea;
-    }
-
-    .mode-btn.active:hover {
-      color: white;
-    }
-
-    .search-form {
-      margin-bottom: 20px;
-    }
-
-    .form-group {
-      margin-bottom: 15px;
-    }
-
-    .form-group label {
-      display: block;
-      margin-bottom: 5px;
-      color: #555;
-      font-size: 0.9em;
-      font-weight: 500;
-    }
-
-    .form-row {
-      display: flex;
-      gap: 10px;
-      align-items: flex-end;
-    }
-
-    .form-row .form-group {
-      flex: 1;
-      margin-bottom: 0;
-    }
-
-    .form-group select,
-    .form-group input[type="number"] {
-      width: 100%;
-      padding: 10px;
-      border: 2px solid #ddd;
-      border-radius: 8px;
-      font-size: 1em;
-      outline: none;
-      transition: border-color 0.3s;
-    }
-
-    .form-group select:focus,
-    .form-group input[type="number"]:focus {
-      border-color: #667eea;
-    }
-
-    .search-actions {
-      display: flex;
-      gap: 10px;
-      margin-top: 15px;
-    }
-
-    .search-condition {
-      margin-bottom: 15px;
-      padding: 15px;
-      background: #f9f9f9;
-      border-radius: 8px;
-      border: 1px solid #e0e0e0;
-    }
-
-    .condition-row {
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-    }
-
-    .add-condition-btn:hover {
-      background: #45a049 !important;
-    }
-
-    .remove-condition-btn:hover {
-      background: #da190b !important;
-    }
-
-    .search-input {
-      flex: 1;
-      padding: 12px;
-      border: 2px solid #ddd;
-      border-radius: 8px;
-      font-size: 1em;
-      outline: none;
-      transition: border-color 0.3s;
-    }
-
-    .search-input:focus {
-      border-color: #667eea;
-    }
-
-    .search-btn {
-      padding: 12px 30px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 1em;
-      cursor: pointer;
-      transition: transform 0.2s, box-shadow 0.2s;
-    }
-
-    .search-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-    }
-
-    .search-btn:active {
-      transform: translateY(0);
-    }
-
-    .search-btn:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-      transform: none;
-    }
-
-    .loading {
-      text-align: center;
-      padding: 20px;
-      color: #667eea;
-      font-size: 1.1em;
-    }
-
-    .error {
-      padding: 15px;
-      background: #fee;
-      border: 1px solid #fcc;
-      border-radius: 8px;
-      color: #c33;
-      margin-bottom: 20px;
-    }
-
-    .papers-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-      background: white;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-      border-radius: 8px;
-      overflow: hidden;
-    }
-
-    .papers-table thead {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-    }
-
-    .papers-table th {
-      padding: 15px;
-      text-align: left;
-      font-weight: 600;
-      white-space: nowrap;
-    }
-
-    .papers-table td {
-      padding: 15px;
-      border-bottom: 1px solid #eee;
-      vertical-align: top;
-    }
-
-    .papers-table tbody tr:hover {
-      background: #f8f9ff;
-    }
-
-    .papers-table tbody tr:last-child td {
-      border-bottom: none;
     }
 
     .paper-title {
+      font-size: 1.1em;
       font-weight: 600;
-      color: #333;
-      margin-bottom: 5px;
-      line-height: 1.4;
-      word-wrap: break-word;
+      color: #1890ff;
+      margin-bottom: 8px;
+      cursor: pointer;
     }
 
-    .paper-id {
-      color: #667eea;
-      font-size: 0.85em;
-      margin-top: 5px;
+    .paper-title:hover {
+      color: #40a9ff;
     }
 
-    .paper-authors {
-      color: #666;
+    .paper-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 8px;
       font-size: 0.9em;
-      line-height: 1.5;
-      word-wrap: break-word;
+      color: #666;
     }
 
     .paper-summary {
       color: #777;
-      font-size: 0.9em;
       line-height: 1.6;
-      word-wrap: break-word;
-      max-height: 120px;
-      overflow-y: auto;
+      margin-top: 8px;
     }
 
     .paper-categories {
+      margin-top: 8px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+    }
+
+    .empty-state-icon {
+      font-size: 64px;
+      color: #d9d9d9;
+      margin-bottom: 16px;
+    }
+
+    .sort-control {
+      margin-bottom: 16px;
       display: flex;
-      flex-wrap: wrap;
-      gap: 5px;
-      margin-top: 5px;
+      align-items: center;
+      gap: 12px;
     }
 
-    .category-tag {
-      background: #e8eaf6;
-      color: #667eea;
-      padding: 3px 8px;
-      border-radius: 4px;
-      font-size: 0.75em;
+    .results-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
     }
 
-    .paper-link {
-      color: #667eea;
-      text-decoration: none;
-      font-size: 0.9em;
+    .results-count {
+      color: #666;
+      font-size: 0.95em;
     }
 
-    .paper-link:hover {
+    .condition-card {
+      transition: all 0.3s;
+    }
+
+    .condition-card:hover {
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .app-container {
+      animation: fadeIn 0.5s ease-in;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .paper-title {
+      transition: color 0.3s;
+    }
+
+    .paper-title:hover {
       text-decoration: underline;
     }
 
-    .no-results {
-      text-align: center;
-      padding: 40px;
-      color: #999;
+    .ant-card-head {
+      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      border-radius: 8px 8px 0 0;
+    }
+
+    .ant-tabs-tab {
+      font-weight: 500;
+    }
+
+    .ant-tabs-tab-active {
+      color: #667eea !important;
+    }
+
+    .ant-tabs-ink-bar {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .ant-btn-primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+
+    .ant-btn-primary:hover {
+      background: linear-gradient(135deg, #5568d3 0%, #6a3d8f 100%);
+      box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+      transform: translateY(-2px);
+    }
+
+    .ant-input:focus,
+    .ant-input-focused,
+    .ant-select-focused .ant-select-selector {
+      border-color: #667eea !important;
+      box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2) !important;
+    }
+
+    .ant-tag {
+      border-radius: 4px;
+      font-size: 0.85em;
+    }
+
+    .loading-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+    }
+
+    .loading-text {
+      margin-top: 16px;
+      color: #666;
+      font-size: 1em;
+    }
+
+    .ant-empty {
+      padding: 60px 20px;
+    }
+
+    .ant-alert {
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .ant-card-body {
+      padding: 20px;
+    }
+
+    .ant-form-item-label > label {
+      font-weight: 500;
+      color: #333;
+    }
+
+    .ant-select-selector,
+    .ant-input {
+      border-radius: 6px;
+    }
+
+    .ant-btn {
+      border-radius: 6px;
+      font-weight: 500;
+      transition: all 0.3s;
+    }
+
+    .ant-btn-dashed:hover {
+      border-color: #667eea;
+      color: #667eea;
+    }
+
+    .ant-card {
+      border-radius: 8px;
+    }
+
+    .ant-divider {
+      margin: 24px 0;
+    }
+
+    .ant-space-item {
+      width: 100%;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>🎨 Design Thesis Retrieval</h1>
-    <p>欢迎使用设计论文检索应用</p>
-    
-    <div class="search-section">
-      <div class="search-mode-toggle">
-        <button class="mode-btn active" data-mode="simple" id="simpleModeBtn">简单搜索</button>
-        <button class="mode-btn" data-mode="advanced" id="advancedModeBtn">高级搜索</button>
-      </div>
+  <div id="root"></div>
 
-      <!-- 简单搜索表单 -->
-      <form class="search-form" id="simpleSearchForm" style="display: block;">
-        <div class="form-row">
-          <div class="form-group">
-            <label for="maxResults">结果数量</label>
-            <input type="number" id="maxResults" min="1" max="100" value="10">
-          </div>
-        </div>
-        
-        <!-- 搜索条件容器 -->
-        <div id="searchConditionsContainer">
-          <!-- 第一个搜索条件 -->
-          <div class="search-condition" data-index="0">
-            <div class="condition-row">
-              <div class="form-group" style="flex: 0 0 150px;">
-                <label>搜索类型</label>
-                <select class="condition-type">
-                  <option value="all">全部字段</option>
-                  <option value="ti">标题</option>
-                  <option value="au">作者</option>
-                  <option value="abs">摘要</option>
-                  <option value="co">评论</option>
-                  <option value="jr">期刊参考</option>
-                  <option value="cat">分类</option>
-                  <option value="rn">报告编号</option>
-                  <option value="id">ID</option>
-                </select>
-              </div>
-              <div class="form-group" style="flex: 1;">
-                <label>关键词</label>
-                <input 
-                  type="text" 
-                  class="search-input condition-keyword" 
-                  placeholder="输入搜索关键词"
-                >
-              </div>
-              <div class="form-group condition-operator-group" style="flex: 0 0 100px; display: none;">
-                <label>逻辑关系</label>
-                <select class="condition-operator">
-                  <option value="AND">AND</option>
-                  <option value="OR">OR</option>
-                  <option value="ANDNOT">NOT</option>
-                </select>
-              </div>
-              <button type="button" class="remove-condition-btn" style="display: none; margin-top: 25px; padding: 10px 15px; background: #f44336; color: white; border: none; border-radius: 6px; cursor: pointer;">删除</button>
-            </div>
-          </div>
-        </div>
-        
-        <div style="margin-top: 10px;">
-          <button type="button" class="add-condition-btn" style="padding: 8px 20px; background: #4CAF50; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em;">+ 添加条件</button>
-        </div>
-        
-        <div class="search-actions">
-          <button type="submit" class="search-btn" id="simpleSearchBtn">搜索</button>
-          <button type="button" class="search-btn" id="clearBtn" style="background: #999;">清空</button>
-        </div>
-      </form>
+  <!-- React and ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel Standalone for JSX transformation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Ant Design JS -->
+  <script src="https://cdn.jsdelivr.net/npm/antd@4.24.15/dist/antd.min.js"></script>
+  
+  <!-- Ant Design Icons -->
+  <script src="https://cdn.jsdelivr.net/npm/@ant-design/icons@4.8.0/dist/index.umd.js"></script>
 
-      <!-- 高级搜索表单 -->
-      <form class="search-form" id="advancedSearchForm" style="display: none;">
-        <div class="form-group">
-          <label for="advancedQuery">arXiv 搜索查询语法</label>
-          <input 
-            type="text" 
-            class="search-input" 
-            id="advancedQuery" 
-            placeholder="例如: ti:LLM AND cat:cs.AI OR au:Smith"
-          >
-          <small style="display: block; margin-top: 5px; color: #888; font-size: 0.85em;">
-            支持语法: ti:(标题), au:(作者), abs:(摘要), cat:(分类), AND, OR, NOT, +, -<br>
-            示例: ti:LLM AND cat:cs.AI | all:design ANDNOT cat:math
-          </small>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label for="advancedMaxResults">结果数量</label>
-            <input type="number" id="advancedMaxResults" min="1" max="100" value="10">
-          </div>
-          <div class="form-group">
-            <label for="startIndex">起始位置</label>
-            <input type="number" id="startIndex" min="0" value="0">
-          </div>
-        </div>
-        <div class="search-actions">
-          <button type="submit" class="search-btn" id="advancedSearchBtn">搜索</button>
-          <button type="button" class="search-btn" id="advancedClearBtn" style="background: #999;">清空</button>
-        </div>
-      </form>
-      
-      <div id="errorMessage" style="display: none;"></div>
-      <div id="loadingMessage" style="display: none;" class="loading">正在加载...</div>
-      
-      <div id="resultsContainer"></div>
-    </div>
-    
-    <!-- <div class="info">
-      <p><strong>Electron 版本:</strong> <span id="electron-version"></span></p>
-      <p><strong>Node 版本:</strong> <span id="node-version"></span></p>
-      <p><strong>Chrome 版本:</strong> <span id="chrome-version"></span></p>
-    </div> -->
-  </div>
-
-  <script src="renderer.js"></script>
+  <script type="text/babel" src="renderer.js"></script>
 </body>
 </html>
-
