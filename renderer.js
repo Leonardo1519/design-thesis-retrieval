@@ -88,6 +88,8 @@ function App() {
   const advancedQueryRef = useRef(null);
   const simpleMaxResultsRef = useRef(null);
   const advancedMaxResultsRef = useRef(null);
+  const [simpleMaxFocused, setSimpleMaxFocused] = useState(false);
+  const [advancedMaxFocused, setAdvancedMaxFocused] = useState(false);
 
   // 格式化日期
   const formatDate = (dateString) => {
@@ -118,6 +120,43 @@ function App() {
       console.error('读取本地保存搜索条件失败:', e);
     }
   }, []);
+
+  useEffect(() => {
+    if (!simpleMaxFocused || !simpleMaxResultsRef.current) return;
+    const el = simpleMaxResultsRef.current;
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      const length = el.value ? el.value.length : 0;
+      if (typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(length, length);
+      }
+    });
+  }, [maxResults, simpleMaxFocused]);
+
+  useEffect(() => {
+    if (!advancedMaxFocused || !advancedMaxResultsRef.current) return;
+    const el = advancedMaxResultsRef.current;
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      const length = el.value ? el.value.length : 0;
+      if (typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(length, length);
+      }
+    });
+  }, [advancedMaxResults, advancedMaxFocused]);
+
+  const normalizeMaxResultsValue = (value, fallback = 10) => {
+    const parsed = parseInt(value, 10);
+    if (isNaN(parsed) || parsed < 1) {
+      return fallback;
+    }
+    if (parsed > 100) {
+      return 100;
+    }
+    return parsed;
+  };
 
   // 通用保存函数
   const saveSearch = (type, data, name) => {
@@ -407,16 +446,7 @@ function App() {
       return;
     }
 
-    // 从 DOM 中读取结果数量，避免受控输入影响光标
-    let max = 10;
-    if (simpleMaxResultsRef.current) {
-      const el = simpleMaxResultsRef.current.input || simpleMaxResultsRef.current;
-      const raw = el.value;
-      const parsed = parseInt(raw, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        max = parsed;
-      }
-    }
+    const max = normalizeMaxResultsValue(maxResults, 10);
 
     setError(null);
     setLoading(true);
@@ -474,16 +504,7 @@ function App() {
       return;
     }
 
-    // 从 DOM 中读取结果数量
-    let max = 10;
-    if (advancedMaxResultsRef.current) {
-      const el = advancedMaxResultsRef.current.input || advancedMaxResultsRef.current;
-      const raw = el.value;
-      const parsed = parseInt(raw, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        max = parsed;
-      }
-    }
+    const max = normalizeMaxResultsValue(advancedMaxResults, 10);
 
     const start = 0; // 高级搜索固定从 0 开始
 
@@ -558,25 +579,31 @@ function App() {
 
   // 更新条件 - 使用 useCallback 稳定函数引用，避免不必要的重新渲染
   const updateCondition = useCallback((id, field, value) => {
-    setConditions(prevConditions => 
-      prevConditions.map(c => 
-        c.id === id ? { ...c, [field]: value } : c
-      )
-    );
+    setConditions(prevConditions => {
+      let changed = false;
+      const next = prevConditions.map(c => {
+        if (c.id !== id) {
+          return c;
+        }
+        if (c[field] === value) {
+          return c;
+        }
+        changed = true;
+        return { ...c, [field]: value };
+      });
+      return changed ? next : prevConditions;
+    });
   }, []);
 
   // 处理数字输入 - 使用 useCallback 稳定函数引用
-  const handleNumberChange = useCallback((setter, defaultValue) => {
+  const handleNumberChange = useCallback((setter) => {
     return (e) => {
       const value = e.target.value;
       if (value === '' || value === null || value === undefined) {
-        setter(defaultValue);
+        setter('');
       } else {
-        const numValue = parseInt(value);
-        if (!isNaN(numValue)) {
-          setter(numValue);
-        } else {
-          // 如果解析失败，保持当前值不变，允许用户继续输入
+        // 仅允许数字输入，其余字符忽略
+        if (/^\d*$/.test(value)) {
           setter(value);
         }
       }
@@ -626,16 +653,7 @@ function App() {
     // 更新内存中的 conditions（不影响当前输入框的显示）
     setConditions(syncedConditions);
 
-    // 从 DOM 获取结果数量
-    let max = 10;
-    if (simpleMaxResultsRef.current) {
-      const el = simpleMaxResultsRef.current.input || simpleMaxResultsRef.current;
-      const raw = el.value;
-      const parsed = parseInt(raw, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        max = parsed;
-      }
-    }
+    const max = normalizeMaxResultsValue(maxResults, 10);
 
     openSaveModal('simple', {
       conditions: syncedConditions,
@@ -662,16 +680,7 @@ function App() {
       return;
     }
 
-    // 从 DOM 读取结果数量
-    let max = 10;
-    if (advancedMaxResultsRef.current) {
-      const el = advancedMaxResultsRef.current.input || advancedMaxResultsRef.current;
-      const raw = el.value;
-      const parsed = parseInt(raw, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        max = parsed;
-      }
-    }
+    const max = normalizeMaxResultsValue(advancedMaxResults, 10);
 
     openSaveModal('advanced', {
       query,
@@ -730,6 +739,9 @@ function App() {
                     // 使用 ref 保存 DOM 引用，构建查询时直接读取 value
                     key={`keyword-input-${condition.id}-${simpleVersion}`}
                     defaultValue={condition.keyword}
+                    onBlur={(e) => {
+                      updateCondition(condition.id, 'keyword', e.target.value || '');
+                    }}
                     ref={(el) => {
                       if (el) {
                         simpleKeywordRefs.current[condition.id] = el;
@@ -775,18 +787,15 @@ function App() {
                 type="number"
                 min={1}
                 max={100}
-                defaultValue={maxResults}
-                ref={simpleMaxResultsRef}
-                onBlur={(e) => {
-                  const value = e.target.value;
-                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 1) {
-                    const el = simpleMaxResultsRef.current
-                      ? (simpleMaxResultsRef.current.input || simpleMaxResultsRef.current)
-                      : e.target;
-                    if (el) {
-                      el.value = '10';
-                    }
-                  }
+                value={maxResults}
+                onChange={handleNumberChange(setMaxResults)}
+                onFocus={() => setSimpleMaxFocused(true)}
+                onBlur={() => {
+                  setSimpleMaxFocused(false);
+                  setMaxResults((prev) => String(normalizeMaxResultsValue(prev, 10)));
+                }}
+                ref={(node) => {
+                  simpleMaxResultsRef.current = node ? (node.input || node) : null;
                 }}
               />
             </Form.Item>
@@ -833,6 +842,10 @@ function App() {
             placeholder="例如: ti:LLM AND cat:cs.AI OR au:Smith"
             rows={3}
             allowClear
+            onBlur={(e) => {
+              const value = e.target.value || '';
+              setAdvancedQuery((prev) => (prev === value ? prev : value));
+            }}
           />
           <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: '4px' }}>
             支持语法: ti:(标题), au:(作者), abs:(摘要), cat:(分类), AND, OR, NOT, +, -<br />
@@ -848,18 +861,15 @@ function App() {
                 type="number"
                 min={1}
                 max={100}
-                defaultValue={advancedMaxResults}
-                ref={advancedMaxResultsRef}
-                onBlur={(e) => {
-                  const value = e.target.value;
-                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 1) {
-                    const el = advancedMaxResultsRef.current
-                      ? (advancedMaxResultsRef.current.input || advancedMaxResultsRef.current)
-                      : e.target;
-                    if (el) {
-                      el.value = '10';
-                    }
-                  }
+                value={advancedMaxResults}
+                onChange={handleNumberChange(setAdvancedMaxResults)}
+                onFocus={() => setAdvancedMaxFocused(true)}
+                onBlur={() => {
+                  setAdvancedMaxFocused(false);
+                  setAdvancedMaxResults((prev) => String(normalizeMaxResultsValue(prev, 10)));
+                }}
+                ref={(node) => {
+                  advancedMaxResultsRef.current = node ? (node.input || node) : null;
                 }}
               />
             </Form.Item>
@@ -922,24 +932,54 @@ function App() {
                     </Space>
                   }
                 >
-                  <Space direction="vertical" style={{ width: '100%' }} size="small">
-                    {item.data?.query && (
-                      <Text type="secondary">
-                        查询：{item.data.query}
+                  <div
+                    className="saved-search-meta-row"
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'nowrap',
+                      alignItems: 'center',
+                      gap: 16,
+                      width: '100%'
+                    }}
+                  >
+                    <div
+                      className="saved-search-meta-info"
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 16,
+                        flex: 1,
+                        minWidth: 280,
+                        flexWrap: 'nowrap',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      {item.data?.query && (
+                        <Text
+                          type="secondary"
+                          style={{
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                          title={item.data.query}
+                        >
+                          查询：{item.data.query}
+                        </Text>
+                      )}
+                      {item.data?.conditions && (
+                        <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+                          条件数：{Array.isArray(item.data.conditions) ? item.data.conditions.length : 0}
+                        </Text>
+                      )}
+                      <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+                        结果数量：{item.data?.maxResults || 10}
                       </Text>
-                    )}
-                    {item.data?.conditions && (
-                      <Text type="secondary">
-                        条件数：{Array.isArray(item.data.conditions) ? item.data.conditions.length : 0}
+                      <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+                        创建时间：{formatDate(item.createdAt)}
                       </Text>
-                    )}
-                    <Text type="secondary">
-                      结果数量：{item.data?.maxResults || 10}
-                    </Text>
-                    <Text type="secondary">
-                      创建时间：{formatDate(item.createdAt)}
-                    </Text>
-                    <Space>
+                    </div>
+                    <Space size="small" style={{ marginLeft: 'auto', flexShrink: 0 }}>
                       <Button
                         type="primary"
                         size="small"
@@ -955,7 +995,7 @@ function App() {
                         删除
                       </Button>
                     </Space>
-                  </Space>
+                  </div>
                 </Card>
               );
             })}
