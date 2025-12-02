@@ -17,6 +17,7 @@ const {
   Col,
   Divider,
   Tooltip,
+  Modal,
   message
 } = antd;
 const { Title, Text, Paragraph } = Typography;
@@ -72,16 +73,21 @@ function App() {
   const [advancedQuery, setAdvancedQuery] = useState('');
   // 使用字符串状态，避免数字输入过程中类型转换导致的光标问题
   const [advancedMaxResults, setAdvancedMaxResults] = useState('10');
-  const [startIndex, setStartIndex] = useState('0');
   // 用于强制重置高级搜索输入框
   const [advancedVersion, setAdvancedVersion] = useState(0);
+
+  // 已保存搜索条件（设置页使用）
+  const [savedSearches, setSavedSearches] = useState([]);
+  // 保存弹窗状态
+  const [saveModalVisible, setSaveModalVisible] = useState(false);
+  const [pendingSavePayload, setPendingSavePayload] = useState(null);
+  const [saveModalName, setSaveModalName] = useState('');
 
   // 关键输入框的 ref
   const simpleKeywordRefs = useRef({});
   const advancedQueryRef = useRef(null);
   const simpleMaxResultsRef = useRef(null);
   const advancedMaxResultsRef = useRef(null);
-  const startIndexRef = useRef(null);
 
   // 格式化日期
   const formatDate = (dateString) => {
@@ -92,6 +98,120 @@ function App() {
       month: '2-digit',
       day: '2-digit'
     });
+  };
+
+  // --- 本地存储：保存 / 加载 搜索条件 ---
+
+  const STORAGE_KEY = 'designThesisSavedSearches';
+
+  // 初始化时从 localStorage 读取
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setSavedSearches(parsed);
+        }
+      }
+    } catch (e) {
+      console.error('读取本地保存搜索条件失败:', e);
+    }
+  }, []);
+
+  // 通用保存函数
+  const saveSearch = (type, data, name) => {
+    const trimmedName = (name || '').trim();
+    if (!trimmedName) {
+      message.error('请输入搜索条件名称');
+      return false;
+    }
+
+    const newItem = {
+      id: Date.now(),
+      type,            // 'simple' | 'advanced'
+      name: trimmedName,
+      data,
+      createdAt: new Date().toISOString()
+    };
+
+    setSavedSearches((prev) => {
+      const updated = [...prev, newItem];
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.error('保存搜索条件到本地失败:', e);
+        message.error('保存到本地失败，请检查浏览器存储权限');
+      }
+      return updated;
+    });
+
+    message.success('搜索设置已保存');
+    // 保存成功后自动跳转到设置页，方便用户立即查看
+    setMode('settings');
+    return true;
+  };
+
+  const openSaveModal = (type, data) => {
+    setPendingSavePayload({ type, data });
+    setSaveModalName('');
+    setSaveModalVisible(true);
+  };
+
+  const closeSaveModal = () => {
+    setSaveModalVisible(false);
+    setPendingSavePayload(null);
+    setSaveModalName('');
+  };
+
+  const handleSaveModalOk = () => {
+    if (!pendingSavePayload) return;
+    const success = saveSearch(pendingSavePayload.type, pendingSavePayload.data, saveModalName);
+    if (success) {
+      closeSaveModal();
+    }
+  };
+
+  const handleSaveModalCancel = () => {
+    closeSaveModal();
+  };
+
+  const deleteSavedSearch = (id) => {
+    setSavedSearches((prev) => {
+      const updated = prev.filter((item) => item.id !== id);
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.error('更新本地保存搜索条件失败:', e);
+      }
+      return updated;
+    });
+    message.success('已删除保存的搜索条件');
+  };
+
+  const applySavedSearch = (item) => {
+    if (!item || !item.type) return;
+
+    if (item.type === 'simple') {
+      const payload = item.data || {};
+      const payloadConditions = Array.isArray(payload.conditions) && payload.conditions.length > 0
+        ? payload.conditions
+        : [{ id: 0, type: 'all', keyword: '', operator: 'AND' }];
+
+      setMode('simple');
+      setConditions(payloadConditions);
+      setMaxResults(String(payload.maxResults || '10'));
+      // 通过版本号强制刷新输入框 defaultValue
+      setSimpleVersion((v) => v + 1);
+      message.success(`已应用到简单搜索：${item.name}`);
+    } else if (item.type === 'advanced') {
+      const payload = item.data || {};
+      setMode('advanced');
+      setAdvancedQuery(payload.query || '');
+      setAdvancedMaxResults(String(payload.maxResults || '10'));
+      setAdvancedVersion((v) => v + 1);
+      message.success(`已应用到高级搜索：${item.name}`);
+    }
   };
 
   // 构建简单搜索查询（直接从输入框 DOM 读取，避免受控输入导致的光标问题）
@@ -354,7 +474,7 @@ function App() {
       return;
     }
 
-    // 从 DOM 中读取结果数量和起始位置
+    // 从 DOM 中读取结果数量
     let max = 10;
     if (advancedMaxResultsRef.current) {
       const el = advancedMaxResultsRef.current.input || advancedMaxResultsRef.current;
@@ -365,15 +485,7 @@ function App() {
       }
     }
 
-    let start = 0;
-    if (startIndexRef.current) {
-      const el = startIndexRef.current.input || startIndexRef.current;
-      const raw = el.value;
-      const parsed = parseInt(raw, 10);
-      if (!isNaN(parsed) && parsed >= 0) {
-        start = parsed;
-      }
-    }
+    const start = 0; // 高级搜索固定从 0 开始
 
     setError(null);
     setLoading(true);
@@ -413,8 +525,26 @@ function App() {
 
   // 添加搜索条件
   const addCondition = () => {
-    const newId = conditions.length > 0 ? Math.max(...conditions.map(c => c.id)) + 1 : 0;
-    setConditions([...conditions, { id: newId, type: 'all', keyword: '', operator: 'AND' }]);
+    // 在添加新条件前，将现有输入框中的关键词同步回条件状态，防止关键词丢失
+    setConditions((prevConditions) => {
+      // 先把当前所有输入框里的值读出来，写回到每个 condition.keyword 中
+      const syncedConditions = prevConditions.map((c) => {
+        const refEl = simpleKeywordRefs.current[c.id];
+        const inputEl = refEl ? (refEl.input || refEl) : null;
+        const keyword = inputEl ? inputEl.value : (c.keyword || '');
+        return { ...c, keyword };
+      });
+
+      const newId =
+        syncedConditions.length > 0
+          ? Math.max(...syncedConditions.map((c) => c.id)) + 1
+          : 0;
+
+      return [
+        ...syncedConditions,
+        { id: newId, type: 'all', keyword: '', operator: 'AND' },
+      ];
+    });
   };
 
   // 删除搜索条件
@@ -468,12 +598,85 @@ function App() {
   const clearAdvancedSearch = () => {
     setAdvancedQuery('');
     setAdvancedMaxResults('10');
-    setStartIndex('0');
     // 增加版本号，强制重置输入框
     setAdvancedVersion(v => v + 1);
     setPapers([]);
     setError(null);
     message.info('已清空搜索条件');
+  };
+
+  // 将当前简单搜索条件保存为常用
+  const handleSaveSimpleSearch = () => {
+    // 把当前输入框里的值同步回条件
+    const syncedConditions = conditions
+      .map((c) => {
+        const refEl = simpleKeywordRefs.current[c.id];
+        const inputEl = refEl ? (refEl.input || refEl) : null;
+        const keyword = inputEl ? inputEl.value : (c.keyword || '');
+        return { ...c, keyword };
+      })
+      // 过滤掉完全没填关键词的条件
+      .filter((c) => (c.keyword || '').trim() !== '');
+
+    if (syncedConditions.length === 0) {
+      message.error('当前没有可保存的搜索关键词');
+      return;
+    }
+
+    // 更新内存中的 conditions（不影响当前输入框的显示）
+    setConditions(syncedConditions);
+
+    // 从 DOM 获取结果数量
+    let max = 10;
+    if (simpleMaxResultsRef.current) {
+      const el = simpleMaxResultsRef.current.input || simpleMaxResultsRef.current;
+      const raw = el.value;
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        max = parsed;
+      }
+    }
+
+    openSaveModal('simple', {
+      conditions: syncedConditions,
+      maxResults: max
+    });
+  };
+
+  // 将当前高级搜索条件保存为常用
+  const handleSaveAdvancedSearch = () => {
+    // 先从 TextArea 取最新文本
+    let querySnapshot = '';
+    if (advancedQueryRef.current) {
+      const el = advancedQueryRef.current.resizableTextArea
+        ? advancedQueryRef.current.resizableTextArea.textArea
+        : advancedQueryRef.current;
+      if (el) {
+        querySnapshot = el.value || '';
+      }
+    }
+
+    let query = (querySnapshot || advancedQuery || '').trim();
+    if (!query) {
+      message.error('请输入要保存的高级搜索查询');
+      return;
+    }
+
+    // 从 DOM 读取结果数量
+    let max = 10;
+    if (advancedMaxResultsRef.current) {
+      const el = advancedMaxResultsRef.current.input || advancedMaxResultsRef.current;
+      const raw = el.value;
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        max = parsed;
+      }
+    }
+
+    openSaveModal('advanced', {
+      query,
+      maxResults: max
+    });
   };
 
   // 获取排序后的论文
@@ -601,6 +804,12 @@ function App() {
             搜索
           </Button>
           <Button
+            onClick={handleSaveSimpleSearch}
+            size="large"
+          >
+            保存为常用条件
+          </Button>
+          <Button
             icon={<ClearOutlined />}
             onClick={clearSimpleSearch}
             size="large"
@@ -655,28 +864,6 @@ function App() {
               />
             </Form.Item>
           </Col>
-          <Col span={8}>
-            <Form.Item label="起始位置">
-              <Input
-                key={`start-index-${advancedVersion}`}
-                type="number"
-                min={0}
-                defaultValue={startIndex}
-                ref={startIndexRef}
-                onBlur={(e) => {
-                  const value = e.target.value;
-                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 0) {
-                    const el = startIndexRef.current
-                      ? (startIndexRef.current.input || startIndexRef.current)
-                      : e.target;
-                    if (el) {
-                      el.value = '0';
-                    }
-                  }
-                }}
-              />
-            </Form.Item>
-          </Col>
         </Row>
 
         <Space>
@@ -690,6 +877,12 @@ function App() {
             搜索
           </Button>
           <Button
+            onClick={handleSaveAdvancedSearch}
+            size="large"
+          >
+            保存为常用条件
+          </Button>
+          <Button
             icon={<ClearOutlined />}
             onClick={clearAdvancedSearch}
             size="large"
@@ -700,6 +893,77 @@ function App() {
       </Space>
     </Form>
   );
+
+  // 设置页：展示和管理已保存的搜索条件
+  const SettingsView = () => {
+    if (!savedSearches || savedSearches.length === 0) {
+      return (
+        <Card title="已保存的搜索条件">
+          <Empty description="暂无已保存的搜索条件" />
+        </Card>
+      );
+    }
+
+    return (
+      <Space direction="vertical" style={{ width: '100%' }} size="large">
+        <Card title="已保存的搜索条件">
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            {savedSearches.map((item) => {
+              const typeLabel = item.type === 'simple' ? '简单搜索' : '高级搜索';
+              return (
+                <Card
+                  key={item.id}
+                  size="small"
+                  type="inner"
+                  title={item.name}
+                  extra={
+                    <Space>
+                      <Text type="secondary">{typeLabel}</Text>
+                    </Space>
+                  }
+                >
+                  <Space direction="vertical" style={{ width: '100%' }} size="small">
+                    {item.data?.query && (
+                      <Text type="secondary">
+                        查询：{item.data.query}
+                      </Text>
+                    )}
+                    {item.data?.conditions && (
+                      <Text type="secondary">
+                        条件数：{Array.isArray(item.data.conditions) ? item.data.conditions.length : 0}
+                      </Text>
+                    )}
+                    <Text type="secondary">
+                      结果数量：{item.data?.maxResults || 10}
+                    </Text>
+                    <Text type="secondary">
+                      创建时间：{formatDate(item.createdAt)}
+                    </Text>
+                    <Space>
+                      <Button
+                        type="primary"
+                        size="small"
+                        onClick={() => applySavedSearch(item)}
+                      >
+                        应用到搜索
+                      </Button>
+                      <Button
+                        danger
+                        size="small"
+                        onClick={() => deleteSavedSearch(item.id)}
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  </Space>
+                </Card>
+              );
+            })}
+          </Space>
+        </Card>
+      </Space>
+    );
+  };
 
   // 论文卡片组件
   const PaperCard = ({ paper }) => {
@@ -841,32 +1105,63 @@ function App() {
   };
 
   return (
-    <div className="app-container">
-      <div className="app-header">
-        <Title level={2} className="app-title">
-          🎨 Design Thesis Retrieval
-        </Title>
-        <Text className="app-subtitle">欢迎使用设计论文检索应用</Text>
+    <>
+      <div className="app-container">
+        <div className="app-header">
+          <Title level={2} className="app-title">
+            🎨 Design Thesis Retrieval
+          </Title>
+          <Text className="app-subtitle">欢迎使用设计论文检索应用</Text>
+        </div>
+
+        <div className="search-section">
+          <Tabs
+            activeKey={mode}
+            onChange={setMode}
+          >
+            <Tabs.TabPane tab="简单搜索" key="simple">
+              <SimpleSearchForm />
+            </Tabs.TabPane>
+            <Tabs.TabPane tab="高级搜索" key="advanced">
+              <AdvancedSearchForm />
+            </Tabs.TabPane>
+            <Tabs.TabPane tab="设置" key="settings">
+              <SettingsView />
+            </Tabs.TabPane>
+          </Tabs>
+        </div>
+
+        {mode !== 'settings' && (
+          <>
+            <Divider />
+            <ResultsDisplay />
+          </>
+        )}
       </div>
 
-      <div className="search-section">
-        <Tabs
-          activeKey={mode}
-          onChange={setMode}
-        >
-          <Tabs.TabPane tab="简单搜索" key="simple">
-            <SimpleSearchForm />
-          </Tabs.TabPane>
-          <Tabs.TabPane tab="高级搜索" key="advanced">
-            <AdvancedSearchForm />
-          </Tabs.TabPane>
-        </Tabs>
-      </div>
-
-      <Divider />
-
-      <ResultsDisplay />
-    </div>
+      <Modal
+        title="保存搜索设置"
+        visible={saveModalVisible}
+        onOk={handleSaveModalOk}
+        onCancel={handleSaveModalCancel}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+        maskClosable={false}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Text type="secondary">请为当前搜索条件命名，方便下次快速使用。</Text>
+          <Input
+            placeholder="例如：常用-交互设计"
+            value={saveModalName}
+            onChange={(e) => setSaveModalName(e.target.value)}
+            onPressEnter={handleSaveModalOk}
+            maxLength={50}
+            autoFocus
+          />
+        </Space>
+      </Modal>
+    </>
   );
 }
 
