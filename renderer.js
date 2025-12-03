@@ -83,6 +83,9 @@ function App() {
   const [saveModalVisible, setSaveModalVisible] = useState(false);
   const [pendingSavePayload, setPendingSavePayload] = useState(null);
   const [saveModalName, setSaveModalName] = useState('');
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [renameTarget, setRenameTarget] = useState(null);
+  const [renameName, setRenameName] = useState('');
 
   // 关键输入框的 ref
   const simpleKeywordRefs = useRef({});
@@ -224,6 +227,70 @@ function App() {
       return updated;
     });
     message.success('已删除保存的搜索条件');
+  };
+
+  const renameSavedSearch = (id, newName) => {
+    const trimmedName = (newName || '').trim();
+    if (!trimmedName) {
+      message.error('请输入搜索条件名称');
+      return false;
+    }
+
+    let renamed = false;
+    setSavedSearches((prev) => {
+      const updated = prev.map((item) => {
+        if (item.id === id) {
+          renamed = true;
+          return {
+            ...item,
+            name: trimmedName,
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return item;
+      });
+
+      if (!renamed) {
+        message.error('未找到对应的搜索条件');
+        return prev;
+      }
+
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.error('更新本地保存搜索条件失败:', e);
+        message.error('更新本地存储失败，请稍后重试');
+      }
+
+      message.success('搜索名称已更新');
+      return updated;
+    });
+
+    return renamed;
+  };
+
+  const openRenameModal = (item) => {
+    setRenameTarget(item);
+    setRenameName(item?.name || '');
+    setRenameModalVisible(true);
+  };
+
+  const closeRenameModal = () => {
+    setRenameModalVisible(false);
+    setRenameTarget(null);
+    setRenameName('');
+  };
+
+  const handleRenameModalOk = () => {
+    if (!renameTarget) return;
+    const success = renameSavedSearch(renameTarget.id, renameName);
+    if (success) {
+      closeRenameModal();
+    }
+  };
+
+  const handleRenameModalCancel = () => {
+    closeRenameModal();
   };
 
   const applySavedSearch = (item) => {
@@ -1061,6 +1128,12 @@ function App() {
                         应用到搜索
                       </Button>
                       <Button
+                        size="small"
+                        onClick={() => openRenameModal(item)}
+                      >
+                        重命名
+                      </Button>
+                      <Button
                         danger
                         size="small"
                         onClick={() => deleteSavedSearch(item.id)}
@@ -1344,6 +1417,30 @@ function App() {
             value={saveModalName}
             onChange={(e) => setSaveModalName(e.target.value)}
             onPressEnter={handleSaveModalOk}
+            maxLength={50}
+            autoFocus
+          />
+        </Space>
+      </Modal>
+      <Modal
+        title="重命名搜索条件"
+        visible={renameModalVisible}
+        onOk={handleRenameModalOk}
+        onCancel={handleRenameModalCancel}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+        maskClosable={false}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Text type="secondary">
+            请输入新的搜索名称，方便快速识别。
+          </Text>
+          <Input
+            placeholder="输入新的搜索名称"
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            onPressEnter={handleRenameModalOk}
             maxLength={50}
             autoFocus
           />
