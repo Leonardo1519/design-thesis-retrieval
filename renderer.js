@@ -156,10 +156,10 @@ function App() {
     });
   }, [advancedMaxResults, advancedMaxFocused]);
 
-  const normalizeMaxResultsValue = (value, fallback = 10) => {
+  const normalizeMaxResultsValue = (value) => {
     const parsed = parseInt(value, 10);
     if (isNaN(parsed) || parsed < 1) {
-      return fallback;
+      return null;
     }
     return Math.min(parsed, MAX_RESULTS_LIMIT);
   };
@@ -372,8 +372,13 @@ function App() {
   const handleEditModalOk = () => {
     if (!editTarget) return;
 
-    const fallbackMax = editTarget.data?.maxResults || 10;
-    const normalizedMax = normalizeMaxResultsValue(editMaxResults, fallbackMax);
+    const fallbackMax = editTarget.data?.maxResults ?? null;
+    const normalizedMaxInput = normalizeMaxResultsValue(editMaxResults);
+    const normalizedMax = normalizedMaxInput ?? fallbackMax ?? null;
+    if (normalizedMax === null) {
+      message.error('请填写有效的结果数量');
+      return;
+    }
     let updatedItem = null;
 
     if (editTarget.type === 'simple') {
@@ -510,9 +515,12 @@ function App() {
   };
 
   // 获取 arXiv 论文数据
-  const fetchArxivPapers = async (searchQuery, start = 0, maxResults = 10) => {
+  const fetchArxivPapers = async (searchQuery, start = 0, maxResults) => {
     try {
-      const url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=${start}&max_results=${maxResults}`;
+      let url = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=${start}`;
+      if (typeof maxResults === 'number' && !isNaN(maxResults)) {
+        url += `&max_results=${maxResults}`;
+      }
       const response = await fetch(url);
       const xmlText = await response.text();
 
@@ -658,12 +666,22 @@ function App() {
     });
 
     const query = buildSimpleQuery();
-    if (!query) {
+    const max = normalizeMaxResultsValue(maxResults);
+    const missingKeyword = !query;
+    const missingMax = max === null;
+
+    if (missingKeyword && missingMax) {
+      message.error('请输入搜索关键词和结果数量');
+      return;
+    }
+    if (missingKeyword) {
       message.error('请输入搜索关键词');
       return;
     }
-
-    const max = normalizeMaxResultsValue(maxResults, 10);
+    if (missingMax) {
+      message.error('请输入结果数量');
+      return;
+    }
 
     setError(null);
     setLoading(true);
@@ -716,12 +734,22 @@ function App() {
     // 从 DOM 中读取高级查询文本
     let query = querySnapshot || advancedQuery;
     query = (query || '').trim();
-    if (!query) {
-      message.error('请输入搜索查询');
+    const max = normalizeMaxResultsValue(advancedMaxResults);
+    const missingKeyword = !query;
+    const missingMax = max === null;
+
+    if (missingKeyword && missingMax) {
+      message.error('请输入搜索关键词和结果数量');
       return;
     }
-
-    const max = normalizeMaxResultsValue(advancedMaxResults, 10);
+    if (missingKeyword) {
+      message.error('请输入搜索关键词');
+      return;
+    }
+    if (missingMax) {
+      message.error('请输入结果数量');
+      return;
+    }
 
     const start = 0; // 高级搜索固定从 0 开始
 
@@ -870,7 +898,11 @@ function App() {
     // 更新内存中的 conditions（不影响当前输入框的显示）
     setConditions(syncedConditions);
 
-    const max = normalizeMaxResultsValue(maxResults, 10);
+    const max = normalizeMaxResultsValue(maxResults);
+    if (max === null) {
+      message.error('请填写有效的结果数量');
+      return;
+    }
 
     openSaveModal('simple', {
       conditions: syncedConditions,
@@ -897,7 +929,11 @@ function App() {
       return;
     }
 
-    const max = normalizeMaxResultsValue(advancedMaxResults, 10);
+    const max = normalizeMaxResultsValue(advancedMaxResults);
+    if (max === null) {
+      message.error('请填写有效的结果数量');
+      return;
+    }
 
     openSaveModal('advanced', {
       query,
@@ -1054,7 +1090,8 @@ function App() {
                       if (prev === '' || prev === null) {
                         return '';
                       }
-                      return String(normalizeMaxResultsValue(prev, 10));
+                      const normalized = normalizeMaxResultsValue(prev);
+                      return normalized === null ? '' : String(normalized);
                     });
                   }}
                   ref={(node) => {
@@ -1142,7 +1179,8 @@ function App() {
                       if (prev === '' || prev === null) {
                         return '';
                       }
-                      return String(normalizeMaxResultsValue(prev, 10));
+                      const normalized = normalizeMaxResultsValue(prev);
+                      return normalized === null ? '' : String(normalized);
                     });
                   }}
                   ref={(node) => {
@@ -1257,7 +1295,7 @@ function App() {
                         </Text>
                       )}
                       <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
-                        结果数量：{item.data?.maxResults || 10}
+                        结果数量：{item.data?.maxResults ?? '未设置'}
                       </Text>
                       <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
                         创建时间：{formatDate(item.createdAt)}
@@ -1695,7 +1733,8 @@ function App() {
                       if (prev === '' || prev === null) {
                         return '';
                       }
-                      return String(normalizeMaxResultsValue(prev, 10));
+                      const normalized = normalizeMaxResultsValue(prev);
+                      return normalized === null ? '' : String(normalized);
                     });
                   }}
                   allowClear
@@ -1730,7 +1769,8 @@ function App() {
                       if (prev === '' || prev === null) {
                         return '';
                       }
-                      return String(normalizeMaxResultsValue(prev, 10));
+                      const normalized = normalizeMaxResultsValue(prev);
+                      return normalized === null ? '' : String(normalized);
                     });
                   }}
                   allowClear

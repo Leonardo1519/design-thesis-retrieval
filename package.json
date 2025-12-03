@@ -1,11 +1,13 @@
 {
   "name": "design-thesis-retrieval",
   "version": "1.0.0",
+  "productName": "DesignThesisRetrieval",
   "description": "Design Thesis Retrieval Application",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "set NODE_ENV=development && electron ."
+    "dev": "set NODE_ENV=development && electron .",
+    "dist:win": "electron-builder --win --x64"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +21,37 @@
   "devDependencies": {
     "electron": "^32.0.0",
     "electron-reload": "^2.0.0-alpha.1",
-    "electron-reloader": "^1.2.3"
+    "electron-reloader": "^1.2.3",
+    "electron-builder": "^25.1.6"
+  },
+  "build": {
+    "appId": "com.example.designthesisretrieval",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "renderer.js",
+      "preload.js",
+      "index.html",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icons/logo.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }
