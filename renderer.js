@@ -86,6 +86,11 @@ function App() {
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameTarget, setRenameTarget] = useState(null);
   const [renameName, setRenameName] = useState('');
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [editConditions, setEditConditions] = useState([]);
+  const [editMaxResults, setEditMaxResults] = useState('');
+  const [editQuery, setEditQuery] = useState('');
 
   // 关键输入框的 ref
   const simpleKeywordRefs = useRef({});
@@ -291,6 +296,145 @@ function App() {
 
   const handleRenameModalCancel = () => {
     closeRenameModal();
+  };
+
+  const getDefaultEditCondition = () => ({
+    id: Date.now() + Math.random(),
+    type: 'all',
+    keyword: '',
+    operator: 'AND'
+  });
+
+  const openEditModal = (item) => {
+    if (!item) return;
+
+    setEditTarget(item);
+    const max = item.data?.maxResults;
+    setEditMaxResults(
+      max === undefined || max === null || max === ''
+        ? ''
+        : String(max)
+    );
+
+    if (item.type === 'simple') {
+      const rawConditions = Array.isArray(item.data?.conditions) && item.data.conditions.length > 0
+        ? item.data.conditions
+        : [getDefaultEditCondition()];
+      const normalized = rawConditions.map((condition, index) => ({
+        id: condition.id ?? Date.now() + index,
+        type: condition.type || 'all',
+        keyword: condition.keyword || '',
+        operator: condition.operator || 'AND'
+      }));
+      setEditConditions(normalized);
+      setEditQuery('');
+    } else {
+      setEditConditions([]);
+      setEditQuery(item.data?.query || '');
+    }
+
+    setEditModalVisible(true);
+  };
+
+  const closeEditModal = () => {
+    setEditModalVisible(false);
+    setEditTarget(null);
+    setEditConditions([]);
+    setEditMaxResults('');
+    setEditQuery('');
+  };
+
+  const addEditCondition = () => {
+    setEditConditions((prev) => [
+      ...prev,
+      getDefaultEditCondition()
+    ]);
+  };
+
+  const removeEditCondition = (id) => {
+    setEditConditions((prev) => {
+      if (prev.length <= 1) {
+        message.warning('至少保留一个搜索条件');
+        return prev;
+      }
+      return prev.filter((item) => item.id !== id);
+    });
+  };
+
+  const updateEditCondition = (id, field, value) => {
+    setEditConditions((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, [field]: value } : item
+      )
+    );
+  };
+
+  const handleEditModalOk = () => {
+    if (!editTarget) return;
+
+    const fallbackMax = editTarget.data?.maxResults || 10;
+    const normalizedMax = normalizeMaxResultsValue(editMaxResults, fallbackMax);
+    let updatedItem = null;
+
+    if (editTarget.type === 'simple') {
+      const sanitized = editConditions
+        .map((condition, index) => ({
+          id: condition.id ?? index,
+          type: condition.type || 'all',
+          keyword: (condition.keyword || '').trim(),
+          operator: index === 0 ? 'AND' : (condition.operator || 'AND')
+        }))
+        .filter((condition) => condition.keyword !== '');
+
+      if (sanitized.length === 0) {
+        message.error('请至少填写一个关键词');
+        return;
+      }
+
+      updatedItem = {
+        ...editTarget,
+        data: {
+          ...editTarget.data,
+          conditions: sanitized,
+          maxResults: normalizedMax
+        },
+        updatedAt: new Date().toISOString()
+      };
+    } else {
+      const queryText = (editQuery || '').trim();
+      if (!queryText) {
+        message.error('请输入搜索查询');
+        return;
+      }
+
+      updatedItem = {
+        ...editTarget,
+        data: {
+          ...editTarget.data,
+          query: queryText,
+          maxResults: normalizedMax
+        },
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    setSavedSearches((prev) => {
+      const updated = prev.map((item) => item.id === updatedItem.id ? updatedItem : item);
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      } catch (e) {
+        console.error('更新本地保存搜索条件失败:', e);
+        message.error('更新本地存储失败，请稍后重试');
+      }
+      return updated;
+    });
+
+    message.success('搜索条件已更新');
+    closeEditModal();
+  };
+
+  const handleEditModalCancel = () => {
+    closeEditModal();
   };
 
   const applySavedSearch = (item) => {
@@ -1129,6 +1273,12 @@ function App() {
                       </Button>
                       <Button
                         size="small"
+                        onClick={() => openEditModal(item)}
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        size="small"
                         onClick={() => openRenameModal(item)}
                       >
                         重命名
@@ -1445,6 +1595,155 @@ function App() {
             autoFocus
           />
         </Space>
+      </Modal>
+      <Modal
+        title={editTarget?.type === 'simple' ? '编辑简单搜索条件' : '编辑高级搜索条件'}
+        visible={editModalVisible}
+        onOk={handleEditModalOk}
+        onCancel={handleEditModalCancel}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+        maskClosable={false}
+        width={760}
+      >
+        {editTarget ? (
+          editTarget.type === 'simple' ? (
+            <Space direction="vertical" style={{ width: '100%' }} size="large">
+              {editConditions.map((condition, index) => (
+                <Card
+                  key={condition.id}
+                  size="small"
+                  type="inner"
+                  title={`条件 ${index + 1}`}
+                  extra={
+                    editConditions.length > 1 && (
+                      <Button
+                        type="link"
+                        danger
+                        size="small"
+                        onClick={() => removeEditCondition(condition.id)}
+                      >
+                        删除
+                      </Button>
+                    )
+                  }
+                >
+                  <Row gutter={16}>
+                    <Col span={6}>
+                      <Text style={{ display: 'block', marginBottom: 8 }}>搜索类型</Text>
+                      <Select
+                        value={condition.type}
+                        onChange={(value) => updateEditCondition(condition.id, 'type', value)}
+                        style={{ width: '100%' }}
+                      >
+                        <Option value="all">全部字段</Option>
+                        <Option value="ti">标题</Option>
+                        <Option value="au">作者</Option>
+                        <Option value="abs">摘要</Option>
+                        <Option value="co">评论</Option>
+                        <Option value="jr">期刊参考</Option>
+                        <Option value="cat">分类</Option>
+                        <Option value="rn">报告编号</Option>
+                        <Option value="id">ID</Option>
+                      </Select>
+                    </Col>
+                    <Col span={index === 0 ? 18 : 12}>
+                      <Text style={{ display: 'block', marginBottom: 8 }}>关键词</Text>
+                      <Input
+                        value={condition.keyword}
+                        onChange={(e) => updateEditCondition(condition.id, 'keyword', e.target.value)}
+                        placeholder="输入关键词"
+                        allowClear
+                      />
+                    </Col>
+                    {index > 0 && (
+                      <Col span={6}>
+                        <Text style={{ display: 'block', marginBottom: 8 }}>逻辑关系</Text>
+                        <Select
+                          value={condition.operator}
+                          onChange={(value) => updateEditCondition(condition.id, 'operator', value)}
+                          style={{ width: '100%' }}
+                        >
+                          <Option value="AND">AND</Option>
+                          <Option value="OR">OR</Option>
+                          <Option value="ANDNOT">NOT</Option>
+                        </Select>
+                      </Col>
+                    )}
+                  </Row>
+                </Card>
+              ))}
+              <Button
+                type="dashed"
+                onClick={addEditCondition}
+                icon={<PlusOutlined />}
+                block
+              >
+                添加条件
+              </Button>
+              <div>
+                <Text style={{ display: 'block', marginBottom: 8 }}>结果数量</Text>
+                <Input
+                  type="number"
+                  min={1}
+                  max={MAX_RESULTS_LIMIT}
+                  value={editMaxResults}
+                  onChange={handleNumberChange(setEditMaxResults)}
+                  onBlur={() => {
+                    setEditMaxResults((prev) => {
+                      if (prev === '' || prev === null) {
+                        return '';
+                      }
+                      return String(normalizeMaxResultsValue(prev, 10));
+                    });
+                  }}
+                  allowClear
+                />
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                  建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
+                </Text>
+              </div>
+            </Space>
+          ) : (
+            <Space direction="vertical" style={{ width: '100%' }} size="large">
+              <div>
+                <Text style={{ display: 'block', marginBottom: 8 }}>arXiv 搜索查询语法</Text>
+                <Input.TextArea
+                  value={editQuery}
+                  onChange={(e) => setEditQuery(e.target.value)}
+                  rows={4}
+                  placeholder="例如: ti:LLM AND cat:cs.AI OR au:Smith"
+                  allowClear
+                />
+              </div>
+              <div>
+                <Text style={{ display: 'block', marginBottom: 8 }}>结果数量</Text>
+                <Input
+                  type="number"
+                  min={1}
+                  max={MAX_RESULTS_LIMIT}
+                  value={editMaxResults}
+                  onChange={handleNumberChange(setEditMaxResults)}
+                  onBlur={() => {
+                    setEditMaxResults((prev) => {
+                      if (prev === '' || prev === null) {
+                        return '';
+                      }
+                      return String(normalizeMaxResultsValue(prev, 10));
+                    });
+                  }}
+                  allowClear
+                />
+                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                  建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
+                </Text>
+              </div>
+            </Space>
+          )
+        ) : (
+          <Text type="secondary">请选择需要编辑的搜索条件</Text>
+        )}
       </Modal>
     </>
   );
