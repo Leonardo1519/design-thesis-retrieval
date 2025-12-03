@@ -697,9 +697,49 @@ function App() {
   // 获取排序后的论文
   const sortedPapers = sortPapers(papers, sortType);
 
+  // 常用条件 Tag 组件
+  const SavedSearchTags = ({ filterType }) => {
+    // filterType: 'simple' | 'advanced' | 'all'
+    const filteredSearches = savedSearches.filter((item) => {
+      if (filterType === 'all') return true;
+      return item.type === filterType;
+    });
+
+    if (filteredSearches.length === 0) {
+      return null;
+    }
+
+    return (
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+        <Text type="secondary" style={{ fontSize: '12px', marginRight: 8, flexShrink: 0 }}>
+          常用搜索条件：
+        </Text>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'auto', whiteSpace: 'nowrap' }}>
+          {filteredSearches.map((item) => (
+            <Tag
+              key={item.id}
+              color="purple"
+              style={{ 
+                cursor: 'pointer',
+                borderRadius: '4px',
+                padding: '2px 8px',
+                transition: 'all 0.3s',
+                flexShrink: 0
+              }}
+              onClick={() => applySavedSearch(item)}
+            >
+              {item.name}
+            </Tag>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   // 简单搜索表单
   const SimpleSearchForm = () => (
     <Form form={simpleForm} layout="vertical">
+      <SavedSearchTags filterType="simple" />
       <Space direction="vertical" style={{ width: '100%' }} size="large">
         {conditions.map((condition, index) => (
           <Card 
@@ -852,6 +892,7 @@ function App() {
   // 高级搜索表单
   const AdvancedSearchForm = () => (
     <Form form={advancedForm} layout="vertical">
+      <SavedSearchTags filterType="advanced" />
       <Space direction="vertical" style={{ width: '100%' }} size="large">
         <Form.Item label="arXiv 搜索查询语法">
           <Input.TextArea
@@ -1272,7 +1313,7 @@ function App() {
             <Tabs.TabPane tab="高级搜索" key="advanced">
               <AdvancedSearchForm />
             </Tabs.TabPane>
-            <Tabs.TabPane tab="设置" key="settings">
+            <Tabs.TabPane tab="常用搜索设置" key="settings">
               <SettingsView />
             </Tabs.TabPane>
           </Tabs>
