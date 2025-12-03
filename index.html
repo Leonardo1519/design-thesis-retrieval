@@ -272,6 +272,46 @@
     .ant-space-item {
       width: 100%;
     }
+
+    /* 论文表格样式 */
+    .papers-table {
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .papers-table .ant-table-thead > tr > th {
+      background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf3 100%);
+      font-weight: 600;
+      color: #333;
+      border-bottom: 2px solid #e8e8e8;
+    }
+
+    .papers-table .ant-table-tbody > tr > td {
+      padding: 12px 16px;
+      vertical-align: middle;
+    }
+
+    .papers-table .ant-table-tbody > tr:hover > td {
+      background: #f0f5ff;
+    }
+
+    .papers-table .ant-table-tbody > tr:nth-child(even) {
+      background: #fafafa;
+    }
+
+    .papers-table .ant-table-tbody > tr:nth-child(even):hover > td {
+      background: #f0f5ff;
+    }
+
+    .papers-table a {
+      color: #1890ff;
+      transition: color 0.3s;
+    }
+
+    .papers-table a:hover {
+      color: #40a9ff;
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>

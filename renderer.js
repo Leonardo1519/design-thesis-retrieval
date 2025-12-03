@@ -22,6 +22,7 @@ const {
 } = antd;
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
+const MAX_RESULTS_LIMIT = 500;
 // 图标组件 - 使用 Ant Design Icons
 const IconComponent = ({ name, ...props }) => {
   if (typeof icons !== 'undefined' && icons[name]) {
@@ -63,7 +64,7 @@ function App() {
     { id: 0, type: 'all', keyword: '', operator: 'AND' }
   ]);
   // 使用字符串状态，避免数字输入过程中类型转换导致的光标问题
-  const [maxResults, setMaxResults] = useState('10');
+  const [maxResults, setMaxResults] = useState('');
   // 用于强制重置简单搜索输入框（例如清空时）
   const [simpleVersion, setSimpleVersion] = useState(0);
   
@@ -72,7 +73,7 @@ function App() {
   // 高级搜索查询字符串（作为备份，不直接驱动 TextArea）
   const [advancedQuery, setAdvancedQuery] = useState('');
   // 使用字符串状态，避免数字输入过程中类型转换导致的光标问题
-  const [advancedMaxResults, setAdvancedMaxResults] = useState('10');
+  const [advancedMaxResults, setAdvancedMaxResults] = useState('');
   // 用于强制重置高级搜索输入框
   const [advancedVersion, setAdvancedVersion] = useState(0);
 
@@ -152,10 +153,7 @@ function App() {
     if (isNaN(parsed) || parsed < 1) {
       return fallback;
     }
-    if (parsed > 100) {
-      return 100;
-    }
-    return parsed;
+    return Math.min(parsed, MAX_RESULTS_LIMIT);
   };
 
   // 通用保存函数
@@ -239,7 +237,11 @@ function App() {
 
       setMode('simple');
       setConditions(payloadConditions);
-      setMaxResults(String(payload.maxResults || '10'));
+      setMaxResults(
+        payload.maxResults === undefined || payload.maxResults === null || payload.maxResults === ''
+          ? ''
+          : String(payload.maxResults)
+      );
       // 通过版本号强制刷新输入框 defaultValue
       setSimpleVersion((v) => v + 1);
       message.success(`已应用到简单搜索：${item.name}`);
@@ -247,7 +249,11 @@ function App() {
       const payload = item.data || {};
       setMode('advanced');
       setAdvancedQuery(payload.query || '');
-      setAdvancedMaxResults(String(payload.maxResults || '10'));
+      setAdvancedMaxResults(
+        payload.maxResults === undefined || payload.maxResults === null || payload.maxResults === ''
+          ? ''
+          : String(payload.maxResults)
+      );
       setAdvancedVersion((v) => v + 1);
       message.success(`已应用到高级搜索：${item.name}`);
     }
@@ -613,7 +619,7 @@ function App() {
   // 清空简单搜索
   const clearSimpleSearch = () => {
     setConditions([{ id: 0, type: 'all', keyword: '', operator: 'AND' }]);
-    setMaxResults('10');
+    setMaxResults('');
     // 增加版本号，强制重置输入框（避免受控输入造成的光标问题）
     setSimpleVersion(v => v + 1);
     setPapers([]);
@@ -624,7 +630,7 @@ function App() {
   // 清空高级搜索
   const clearAdvancedSearch = () => {
     setAdvancedQuery('');
-    setAdvancedMaxResults('10');
+    setAdvancedMaxResults('');
     // 增加版本号，强制重置输入框
     setAdvancedVersion(v => v + 1);
     setPapers([]);
@@ -782,22 +788,35 @@ function App() {
         <Row gutter={16}>
           <Col span={8}>
             <Form.Item label="结果数量">
-              <Input
-                key={`simple-max-results-${simpleVersion}`}
-                type="number"
-                min={1}
-                max={100}
-                value={maxResults}
-                onChange={handleNumberChange(setMaxResults)}
-                onFocus={() => setSimpleMaxFocused(true)}
-                onBlur={() => {
-                  setSimpleMaxFocused(false);
-                  setMaxResults((prev) => String(normalizeMaxResultsValue(prev, 10)));
-                }}
-                ref={(node) => {
-                  simpleMaxResultsRef.current = node ? (node.input || node) : null;
-                }}
-              />
+              <div>
+                <Input
+                  key={`simple-max-results-${simpleVersion}`}
+                  type="number"
+                  min={1}
+                  max={MAX_RESULTS_LIMIT}
+                  value={maxResults}
+                  onChange={handleNumberChange(setMaxResults)}
+                  onFocus={() => setSimpleMaxFocused(true)}
+                  onBlur={() => {
+                    setSimpleMaxFocused(false);
+                    setMaxResults((prev) => {
+                      if (prev === '' || prev === null) {
+                        return '';
+                      }
+                      return String(normalizeMaxResultsValue(prev, 10));
+                    });
+                  }}
+                  ref={(node) => {
+                    simpleMaxResultsRef.current = node ? (node.input || node) : null;
+                  }}
+                />
+                <Text
+                  type="secondary"
+                  style={{ fontSize: '12px', display: 'block', marginTop: '4px' }}
+                >
+                  建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
+                </Text>
+              </div>
             </Form.Item>
           </Col>
         </Row>
@@ -856,22 +875,35 @@ function App() {
         <Row gutter={16}>
           <Col span={8}>
             <Form.Item label="结果数量">
-              <Input
-                key={`advanced-max-results-${advancedVersion}`}
-                type="number"
-                min={1}
-                max={100}
-                value={advancedMaxResults}
-                onChange={handleNumberChange(setAdvancedMaxResults)}
-                onFocus={() => setAdvancedMaxFocused(true)}
-                onBlur={() => {
-                  setAdvancedMaxFocused(false);
-                  setAdvancedMaxResults((prev) => String(normalizeMaxResultsValue(prev, 10)));
-                }}
-                ref={(node) => {
-                  advancedMaxResultsRef.current = node ? (node.input || node) : null;
-                }}
-              />
+              <div>
+                <Input
+                  key={`advanced-max-results-${advancedVersion}`}
+                  type="number"
+                  min={1}
+                  max={MAX_RESULTS_LIMIT}
+                  value={advancedMaxResults}
+                  onChange={handleNumberChange(setAdvancedMaxResults)}
+                  onFocus={() => setAdvancedMaxFocused(true)}
+                  onBlur={() => {
+                    setAdvancedMaxFocused(false);
+                    setAdvancedMaxResults((prev) => {
+                      if (prev === '' || prev === null) {
+                        return '';
+                      }
+                      return String(normalizeMaxResultsValue(prev, 10));
+                    });
+                  }}
+                  ref={(node) => {
+                    advancedMaxResultsRef.current = node ? (node.input || node) : null;
+                  }}
+                />
+                <Text
+                  type="secondary"
+                  style={{ fontSize: '12px', display: 'block', marginTop: '4px' }}
+                >
+                  建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
+                </Text>
+              </div>
             </Form.Item>
           </Col>
         </Row>
@@ -1005,74 +1037,129 @@ function App() {
     );
   };
 
-  // 论文卡片组件
-  const PaperCard = ({ paper }) => {
-    const pdfLink = paper.links.find(link => link.type === 'application/pdf')?.href || 
-                   paper.links.find(link => link.rel === 'related')?.href || 
-                   `https://arxiv.org/abs/${paper.id}`;
-
-    return (
-      <Card 
-        className="paper-card" 
-        hoverable
-        actions={[
-          <Button 
-            type="link" 
-            href={pdfLink} 
-            target="_blank"
-            icon={<FileTextOutlined />}
-            key="view"
-          >
-            查看论文
-          </Button>
-        ]}
-      >
-        <div 
-          className="paper-title" 
-          onClick={() => window.open(pdfLink, '_blank')}
-          style={{ cursor: 'pointer' }}
-        >
-          <FileTextOutlined style={{ marginRight: 8, color: '#667eea' }} />
-          {paper.title}
-        </div>
-        <div className="paper-meta" style={{ marginTop: 12, marginBottom: 12 }}>
-          <Space size="middle" wrap>
-            <span>
-              <UserOutlined style={{ marginRight: 4, color: '#1890ff' }} />
-              <Text type="secondary">
-                {paper.authors && paper.authors.length > 0 
-                  ? paper.authors.slice(0, 3).join(', ') + (paper.authors.length > 3 ? '...' : '')
-                  : 'N/A'}
-              </Text>
-            </span>
-            <span>
-              <CalendarOutlined style={{ marginRight: 4, color: '#52c41a' }} />
-              <Text type="secondary">{formatDate(paper.published)}</Text>
-            </span>
-            <Text type="secondary" style={{ fontSize: '0.85em' }}>
-              ID: {paper.id}
-            </Text>
-          </Space>
-        </div>
-        {paper.categories && paper.categories.length > 0 && (
-          <div className="paper-categories" style={{ marginBottom: 12 }}>
-            <Space size={[0, 8]} wrap>
-              {paper.categories.map((cat, idx) => (
-                <Tag key={idx} color="blue">{cat}</Tag>
-              ))}
-            </Space>
-          </div>
-        )}
-        <Paragraph 
-          className="paper-summary" 
-          ellipsis={{ rows: 3, expandable: true, symbol: '展开' }}
-          style={{ marginBottom: 0 }}
-        >
-          {paper.summary || '无摘要'}
-        </Paragraph>
-      </Card>
-    );
+  // 获取论文的PDF链接
+  const getPaperLink = (paper) => {
+    return paper.links.find(link => link.type === 'application/pdf')?.href || 
+           paper.links.find(link => link.rel === 'related')?.href || 
+           `https://arxiv.org/abs/${paper.id}`;
   };
+
+  // 获取当前搜索条件的显示文本
+  const getCurrentSearchQuery = () => {
+    if (mode === 'simple') {
+      // 从简单搜索条件中提取关键词
+      const keywords = conditions
+        .map((c) => {
+          const refEl = simpleKeywordRefs.current[c.id];
+          const inputEl = refEl ? (refEl.input || refEl) : null;
+          const keyword = inputEl ? inputEl.value : (c.keyword || '');
+          return keyword.trim();
+        })
+        .filter(k => k);
+      return keywords.length > 0 ? keywords.join(', ') : '';
+    } else if (mode === 'advanced') {
+      // 从高级搜索中获取查询
+      let querySnapshot = '';
+      if (advancedQueryRef.current) {
+        const el = advancedQueryRef.current.resizableTextArea
+          ? advancedQueryRef.current.resizableTextArea.textArea
+          : advancedQueryRef.current;
+        if (el) {
+          querySnapshot = el.value || '';
+        }
+      }
+      return querySnapshot || advancedQuery || '';
+    }
+    return '';
+  };
+
+  // 表格列定义
+  const tableColumns = [
+    {
+      title: '搜索条件',
+      dataIndex: 'searchQuery',
+      key: 'searchQuery',
+      width: 120,
+      ellipsis: true,
+      render: (text) => (
+        <Tooltip title={text}>
+          <Text style={{ color: '#666' }}>{text || '-'}</Text>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '标题',
+      dataIndex: 'title',
+      key: 'title',
+      width: 300,
+      ellipsis: true,
+      render: (text, record) => (
+        <Tooltip title={text}>
+          <a 
+            href={getPaperLink(record)} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            style={{ color: '#1890ff' }}
+          >
+            {text}
+          </a>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '作者',
+      dataIndex: 'authors',
+      key: 'authors',
+      width: 200,
+      ellipsis: true,
+      render: (authors) => {
+        const authorText = authors && authors.length > 0 
+          ? authors.join(', ')
+          : 'N/A';
+        return (
+          <Tooltip title={authorText}>
+            <Text style={{ color: '#666' }}>{authorText}</Text>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: '发布日期',
+      dataIndex: 'published',
+      key: 'published',
+      width: 110,
+      render: (date) => (
+        <Text style={{ color: '#666' }}>{formatDate(date)}</Text>
+      ),
+    },
+    {
+      title: '摘要',
+      dataIndex: 'summary',
+      key: 'summary',
+      ellipsis: true,
+      render: (text) => (
+        <Tooltip title={text} overlayStyle={{ maxWidth: 500 }}>
+          <Text style={{ color: '#666' }}>{text || '无摘要'}</Text>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 80,
+      fixed: 'right',
+      render: (_, record) => (
+        <Button 
+          type="link" 
+          href={getPaperLink(record)} 
+          target="_blank"
+          style={{ padding: 0 }}
+        >
+          查看
+        </Button>
+      ),
+    },
+  ];
 
   // 结果展示
   const ResultsDisplay = () => {
@@ -1107,6 +1194,16 @@ function App() {
       );
     }
 
+    // 获取当前搜索条件
+    const searchQuery = getCurrentSearchQuery();
+
+    // 为表格数据添加搜索条件和唯一key
+    const tableData = sortedPapers.map((paper, index) => ({
+      ...paper,
+      key: paper.id || index,
+      searchQuery: searchQuery,
+    }));
+
     return (
       <div>
         <div className="results-header">
@@ -1135,11 +1232,21 @@ function App() {
           </Space>
         </div>
         <Divider />
-        <Space direction="vertical" style={{ width: '100%' }} size="large">
-          {sortedPapers.map((paper, index) => (
-            <PaperCard key={paper.id || index} paper={paper} />
-          ))}
-        </Space>
+        <Table
+          columns={tableColumns}
+          dataSource={tableData}
+          pagination={{
+            defaultPageSize: 20,
+            pageSizeOptions: ['10', '20', '30', '50', '100'],
+            showSizeChanger: true,
+            showQuickJumper: true,
+            showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
+          }}
+          scroll={{ x: 1000 }}
+          size="middle"
+          bordered
+          className="papers-table"
+        />
       </div>
     );
   };
