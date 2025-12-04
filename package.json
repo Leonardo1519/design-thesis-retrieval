@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "set NODE_ENV=development && electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
     "dist:win": "electron-builder --win --x64"
   },
   "keywords": [],
@@ -22,7 +22,8 @@
     "electron": "^32.0.0",
     "electron-reload": "^2.0.0-alpha.1",
     "electron-reloader": "^1.2.3",
-    "electron-builder": "^25.1.6"
+    "electron-builder": "^25.1.6",
+    "cross-env": "^7.0.3"
   },
   "build": {
     "appId": "com.example.designthesisretrieval",
