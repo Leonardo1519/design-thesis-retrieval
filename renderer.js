@@ -72,12 +72,16 @@ function App() {
   const [advancedQuery, setAdvancedQuery] = useState('');
   // 使用字符串状态，避免数字输入过程中类型转换导致的光标问题
   const [advancedMaxResults, setAdvancedMaxResults] = useState('10');
+  const [startIndex, setStartIndex] = useState('0');
   // 用于强制重置高级搜索输入框
   const [advancedVersion, setAdvancedVersion] = useState(0);
 
   // 关键输入框的 ref
   const simpleKeywordRefs = useRef({});
   const advancedQueryRef = useRef(null);
+  const simpleMaxResultsRef = useRef(null);
+  const advancedMaxResultsRef = useRef(null);
+  const startIndexRef = useRef(null);
 
   // 格式化日期
   const formatDate = (dateString) => {
@@ -283,10 +287,15 @@ function App() {
       return;
     }
 
-    // 从状态读取结果数量
-    let max = parseInt(maxResults, 10);
-    if (isNaN(max) || max <= 0) {
-      max = 10;
+    // 从 DOM 中读取结果数量，避免受控输入影响光标
+    let max = 10;
+    if (simpleMaxResultsRef.current) {
+      const el = simpleMaxResultsRef.current.input || simpleMaxResultsRef.current;
+      const raw = el.value;
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        max = parsed;
+      }
     }
 
     setError(null);
@@ -345,10 +354,25 @@ function App() {
       return;
     }
 
-    // 从状态中读取结果数量
-    let max = parseInt(advancedMaxResults, 10);
-    if (isNaN(max) || max <= 0) {
-      max = 10;
+    // 从 DOM 中读取结果数量和起始位置
+    let max = 10;
+    if (advancedMaxResultsRef.current) {
+      const el = advancedMaxResultsRef.current.input || advancedMaxResultsRef.current;
+      const raw = el.value;
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        max = parsed;
+      }
+    }
+
+    let start = 0;
+    if (startIndexRef.current) {
+      const el = startIndexRef.current.input || startIndexRef.current;
+      const raw = el.value;
+      const parsed = parseInt(raw, 10);
+      if (!isNaN(parsed) && parsed >= 0) {
+        start = parsed;
+      }
     }
 
     setError(null);
@@ -356,8 +380,7 @@ function App() {
     setPapers([]);
 
     try {
-      // 高级搜索默认从 0 开始
-      const result = await fetchArxivPapers(query, 0, max);
+      const result = await fetchArxivPapers(query, start, max);
       setLoading(false);
 
       if (result.success) {
@@ -390,29 +413,8 @@ function App() {
 
   // 添加搜索条件
   const addCondition = () => {
-    // 先快照当前所有关键词输入框的内容，避免新增条件导致已有关键词丢失
-    const keywordSnapshot = {};
-    conditions.forEach((condition) => {
-      const refEl = simpleKeywordRefs.current[condition.id];
-      const inputEl = refEl ? (refEl.input || refEl) : null;
-      if (inputEl) {
-        keywordSnapshot[condition.id] = inputEl.value;
-      }
-    });
-
     const newId = conditions.length > 0 ? Math.max(...conditions.map(c => c.id)) + 1 : 0;
     setConditions([...conditions, { id: newId, type: 'all', keyword: '', operator: 'AND' }]);
-
-    // 在下一个渲染周期中恢复原有输入框的内容
-    setTimeout(() => {
-      Object.keys(keywordSnapshot).forEach((id) => {
-        const refEl = simpleKeywordRefs.current[id];
-        const inputEl = refEl ? (refEl.input || refEl) : null;
-        if (inputEl && typeof keywordSnapshot[id] === 'string') {
-          inputEl.value = keywordSnapshot[id];
-        }
-      });
-    }, 0);
   };
 
   // 删除搜索条件
@@ -421,32 +423,7 @@ function App() {
       message.warning('至少需要保留一个搜索条件');
       return;
     }
-
-    // 先快照当前所有关键词输入框的内容，避免删除条件导致其它条件的关键词丢失
-    const keywordSnapshot = {};
-    conditions.forEach((condition) => {
-      const refEl = simpleKeywordRefs.current[condition.id];
-      const inputEl = refEl ? (refEl.input || refEl) : null;
-      if (inputEl) {
-        keywordSnapshot[condition.id] = inputEl.value;
-      }
-    });
-
-    // 更新条件列表，移除指定条件
-    const newConditions = conditions.filter(c => c.id !== id);
-    setConditions(newConditions);
-
-    // 在下一个渲染周期中恢复剩余条件输入框的内容
-    setTimeout(() => {
-      newConditions.forEach((condition) => {
-        const condId = condition.id;
-        const refEl = simpleKeywordRefs.current[condId];
-        const inputEl = refEl ? (refEl.input || refEl) : null;
-        if (inputEl && typeof keywordSnapshot[condId] === 'string') {
-          inputEl.value = keywordSnapshot[condId];
-        }
-      });
-    }, 0);
+    setConditions(conditions.filter(c => c.id !== id));
   };
 
   // 更新条件 - 使用 useCallback 稳定函数引用，避免不必要的重新渲染
@@ -491,6 +468,7 @@ function App() {
   const clearAdvancedSearch = () => {
     setAdvancedQuery('');
     setAdvancedMaxResults('10');
+    setStartIndex('0');
     // 增加版本号，强制重置输入框
     setAdvancedVersion(v => v + 1);
     setPapers([]);
@@ -590,48 +568,21 @@ function App() {
           <Col span={8}>
             <Form.Item label="结果数量">
               <Input
+                key={`simple-max-results-${simpleVersion}`}
                 type="number"
                 min={1}
                 max={100}
-                value={maxResults}
-                onChange={(e) => {
-                  const value = e.target.value;
-
-                  // 在修改结果数量时，快照并恢复所有关键词，避免被清空
-                  const keywordSnapshot = {};
-                  conditions.forEach((condition) => {
-                    const refEl = simpleKeywordRefs.current[condition.id];
-                    const inputEl = refEl ? (refEl.input || refEl) : null;
-                    if (inputEl) {
-                      keywordSnapshot[condition.id] = inputEl.value;
-                    }
-                  });
-
-                  // 允许空字符串，方便用户编辑
-                  if (value === '') {
-                    setMaxResults('');
-                  } else {
-                    setMaxResults(value);
-                  }
-
-                  // 在下一次渲染后恢复关键词输入框内容
-                  setTimeout(() => {
-                    Object.keys(keywordSnapshot).forEach((id) => {
-                      const refEl = simpleKeywordRefs.current[id];
-                      const inputEl = refEl ? (refEl.input || refEl) : null;
-                      if (inputEl && typeof keywordSnapshot[id] === 'string') {
-                        inputEl.value = keywordSnapshot[id];
-                      }
-                    });
-                  }, 0);
-                }}
+                defaultValue={maxResults}
+                ref={simpleMaxResultsRef}
                 onBlur={(e) => {
                   const value = e.target.value;
-                  const parsed = parseInt(value, 10);
-                  if (isNaN(parsed) || parsed < 1) {
-                    setMaxResults('10');
-                  } else {
-                    setMaxResults(String(parsed));
+                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 1) {
+                    const el = simpleMaxResultsRef.current
+                      ? (simpleMaxResultsRef.current.input || simpleMaxResultsRef.current)
+                      : e.target;
+                    if (el) {
+                      el.value = '10';
+                    }
                   }
                 }}
               />
@@ -684,25 +635,43 @@ function App() {
           <Col span={8}>
             <Form.Item label="结果数量">
               <Input
+                key={`advanced-max-results-${advancedVersion}`}
                 type="number"
                 min={1}
                 max={100}
-                value={advancedMaxResults}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === '') {
-                    setAdvancedMaxResults('');
-                  } else {
-                    setAdvancedMaxResults(value);
-                  }
-                }}
+                defaultValue={advancedMaxResults}
+                ref={advancedMaxResultsRef}
                 onBlur={(e) => {
                   const value = e.target.value;
-                  const parsed = parseInt(value, 10);
-                  if (isNaN(parsed) || parsed < 1) {
-                    setAdvancedMaxResults('10');
-                  } else {
-                    setAdvancedMaxResults(String(parsed));
+                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 1) {
+                    const el = advancedMaxResultsRef.current
+                      ? (advancedMaxResultsRef.current.input || advancedMaxResultsRef.current)
+                      : e.target;
+                    if (el) {
+                      el.value = '10';
+                    }
+                  }
+                }}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={8}>
+            <Form.Item label="起始位置">
+              <Input
+                key={`start-index-${advancedVersion}`}
+                type="number"
+                min={0}
+                defaultValue={startIndex}
+                ref={startIndexRef}
+                onBlur={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || isNaN(parseInt(value)) || parseInt(value) < 0) {
+                    const el = startIndexRef.current
+                      ? (startIndexRef.current.input || startIndexRef.current)
+                      : e.target;
+                    if (el) {
+                      el.value = '0';
+                    }
                   }
                 }}
               />
