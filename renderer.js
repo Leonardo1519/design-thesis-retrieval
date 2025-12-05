@@ -18,6 +18,8 @@ const {
   Divider,
   Tooltip,
   Modal,
+  Dropdown,
+  Menu,
   message
 } = antd;
 const { Title, Text, Paragraph } = Typography;
@@ -37,7 +39,8 @@ const IconComponent = ({ name, ...props }) => {
     ClearOutlined: '✕',
     FileTextOutlined: '📄',
     CalendarOutlined: '📅',
-    UserOutlined: '👤'
+    UserOutlined: '👤',
+    SettingOutlined: '⚙️'
   };
   return <span {...props} style={{ display: 'inline-block', ...props.style }}>{iconMap[name] || '•'}</span>;
 };
@@ -49,6 +52,7 @@ const ClearOutlined = (props) => <IconComponent name="ClearOutlined" {...props} 
 const FileTextOutlined = (props) => <IconComponent name="FileTextOutlined" {...props} />;
 const CalendarOutlined = (props) => <IconComponent name="CalendarOutlined" {...props} />;
 const UserOutlined = (props) => <IconComponent name="UserOutlined" {...props} />;
+const SettingOutlined = (props) => <IconComponent name="SettingOutlined" {...props} />;
 
 // 主应用组件
 function App() {
@@ -92,6 +96,11 @@ function App() {
   const [editConditions, setEditConditions] = useState([]);
   const [editMaxResults, setEditMaxResults] = useState('');
   const [editQuery, setEditQuery] = useState('');
+  const [crawlLoadingId, setCrawlLoadingId] = useState(null);
+  const [changingDataDir, setChangingDataDir] = useState(false);
+  const electronAPI = typeof window !== 'undefined' ? window.electronAPI : null;
+  const canPersistData = !!(electronAPI && typeof electronAPI.savePapers === 'function');
+  const canChangeDataDir = !!(electronAPI && typeof electronAPI.pickDataDirectory === 'function');
 
   // 关键输入框的 ref
   const simpleKeywordRefs = useRef({});
@@ -544,6 +553,68 @@ function App() {
     return query;
   };
 
+  const buildQueryFromSavedConditions = (rawConditions = []) => {
+    if (!Array.isArray(rawConditions)) {
+      return null;
+    }
+    const normalized = rawConditions
+      .map((condition, index) => {
+        const keyword = ((condition && condition.keyword) || '').trim();
+        const type = (condition && condition.type) || 'all';
+        const operator = index === 0 ? null : ((condition && condition.operator) || 'AND');
+        return { keyword, type, operator };
+      })
+      .filter((condition) => condition.keyword);
+
+    if (normalized.length === 0) {
+      return null;
+    }
+
+    let query =
+      normalized[0].type === 'all'
+        ? normalized[0].keyword
+        : `${normalized[0].type}:${normalized[0].keyword}`;
+
+    for (let i = 1; i < normalized.length; i++) {
+      const current = normalized[i];
+      const part =
+        current.type === 'all'
+          ? current.keyword
+          : `${current.type}:${current.keyword}`;
+      const operator = (current.operator || 'AND').toUpperCase();
+      query += ` ${operator} ${part}`;
+    }
+
+    return query;
+  };
+
+  const getSavedSearchQueryPayload = (savedItem) => {
+    if (!savedItem) {
+      return { error: '未找到对应的搜索设置' };
+    }
+    const data = savedItem.data || {};
+    const normalizedMax = normalizeMaxResultsValue(data.maxResults);
+
+    if (normalizedMax === null) {
+      return { error: '该搜索未设置有效的结果数量' };
+    }
+
+    if (savedItem.type === 'simple') {
+      const query = buildQueryFromSavedConditions(data.conditions || []);
+      if (!query) {
+        return { error: '搜索条件缺少关键词' };
+      }
+      return { query, max: normalizedMax };
+    }
+
+    const queryText = (data.query || '').trim();
+    if (!queryText) {
+      return { error: '搜索条件缺少查询语句' };
+    }
+
+    return { query: queryText, max: normalizedMax };
+  };
+
   // 获取 arXiv 论文数据
   const fetchArxivPapers = async (searchQuery, start = 0, maxResults) => {
     try {
@@ -819,6 +890,78 @@ function App() {
     }
   };
 
+  const crawlSavedSearch = async (item) => {
+    if (!item) {
+      message.error('未找到对应的搜索设置');
+      return;
+    }
+    if (!canPersistData || !electronAPI || typeof electronAPI.savePapers !== 'function') {
+      message.warning('当前运行环境暂不支持本地保存功能');
+      return;
+    }
+
+    const payload = getSavedSearchQueryPayload(item);
+    if (!payload || payload.error) {
+      if (payload && payload.error) {
+        message.error(payload.error);
+      }
+      return;
+    }
+
+    setCrawlLoadingId(item.id);
+    try {
+      const result = await fetchArxivPapers(payload.query, 0, payload.max);
+      if (!result.success) {
+        message.error(`爬取失败: ${result.error || '未知错误'}`);
+        return;
+      }
+
+      const saveResult = await electronAPI.savePapers({
+        searchName: item.name,
+        searchType: item.type,
+        query: payload.query,
+        maxResults: payload.max,
+        papers: result.papers
+      });
+
+      if (!saveResult || !saveResult.success) {
+        message.error((saveResult && saveResult.error) || '保存数据失败');
+        return;
+      }
+
+      if (saveResult.newCount > 0) {
+        message.success(`「${item.name}」新增 ${saveResult.newCount} 篇论文`);
+      }
+    } catch (error) {
+      message.error(`爬取失败: ${error.message}`);
+    } finally {
+      setCrawlLoadingId(null);
+    }
+  };
+
+  const handleChangeDataDirectory = async () => {
+    if (!canChangeDataDir || !electronAPI || typeof electronAPI.pickDataDirectory !== 'function') {
+      message.warning('当前运行环境暂不支持修改 data 路径');
+      return;
+    }
+    setChangingDataDir(true);
+    try {
+      const result = await electronAPI.pickDataDirectory();
+      if (!result || result.cancelled) {
+        return;
+      }
+      if (!result.success) {
+        message.error(result.error || '更新 data 路径失败');
+        return;
+      }
+      message.success(`data 路径已更新：${result.path}`);
+    } catch (error) {
+      message.error(`更新 data 路径失败：${error.message}`);
+    } finally {
+      setChangingDataDir(false);
+    }
+  };
+
   // 添加搜索条件
   const addCondition = () => {
     // 在添加新条件前，将现有输入框中的关键词同步回条件状态，防止关键词丢失
@@ -973,6 +1116,25 @@ function App() {
 
   // 获取排序后的论文
   const sortedPapers = sortPapers(papers, sortType);
+
+  const settingsMenu = (
+    <Menu
+      onClick={({ key }) => {
+        if (key === 'change-data-dir') {
+          handleChangeDataDirectory();
+        }
+      }}
+      style={{ borderRadius: 8 }}
+    >
+      <Menu.Item
+        key="change-data-dir"
+        disabled={!canChangeDataDir || changingDataDir}
+        style={{ whiteSpace: 'nowrap' }}
+      >
+        爬取数据存放路径
+      </Menu.Item>
+    </Menu>
+  );
 
   // 常用条件 Tag 组件
   const SavedSearchTags = ({ filterType }) => {
@@ -1268,6 +1430,13 @@ function App() {
 
     return (
       <Space direction="vertical" style={{ width: '100%' }} size="large">
+        {!canPersistData && (
+          <Alert
+            type="info"
+            message="当前预览模式无法写入 data 文件夹，仅可浏览搜索设置。"
+            showIcon
+          />
+        )}
         <Card title="已保存的搜索条件">
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
             {savedSearches.map((item) => {
@@ -1332,6 +1501,17 @@ function App() {
                       </Text>
                     </div>
                     <Space size="small" style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                      {canPersistData && (
+                        <Button
+                          type="primary"
+                          ghost
+                          size="small"
+                          loading={crawlLoadingId === item.id}
+                          onClick={() => crawlSavedSearch(item)}
+                        >
+                          爬取入库
+                        </Button>
+                      )}
                       <Button
                         type="primary"
                         size="small"
@@ -1587,10 +1767,28 @@ function App() {
     <>
       <div className="app-container">
         <div className="app-header">
-          <Title level={2} className="app-title">
-            🎨 Design Thesis Retrieval
-          </Title>
-          <Text className="app-subtitle">欢迎使用设计论文检索应用</Text>
+          <div className="app-header-info">
+            <Title level={2} className="app-title">
+              🎨 Design Thesis Retrieval
+            </Title>
+            <Text className="app-subtitle">欢迎使用设计论文检索应用</Text>
+          </div>
+          <div className="app-header-actions">
+            <Dropdown
+              overlay={settingsMenu}
+              trigger={['click']}
+              placement="bottomRight"
+              disabled={!canChangeDataDir}
+            >
+              <Button
+                icon={<SettingOutlined />}
+                loading={changingDataDir}
+                disabled={!canChangeDataDir}
+              >
+                Setting
+              </Button>
+            </Dropdown>
+          </div>
         </div>
 
         <div className="search-section">
