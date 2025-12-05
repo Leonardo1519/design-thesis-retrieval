@@ -83,6 +83,7 @@ function App() {
   const [saveModalVisible, setSaveModalVisible] = useState(false);
   const [pendingSavePayload, setPendingSavePayload] = useState(null);
   const [saveModalName, setSaveModalName] = useState('');
+  const [saveModalError, setSaveModalError] = useState('');
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameTarget, setRenameTarget] = useState(null);
   const [renameName, setRenameName] = useState('');
@@ -200,6 +201,7 @@ function App() {
   const openSaveModal = (type, data) => {
     setPendingSavePayload({ type, data });
     setSaveModalName('');
+    setSaveModalError('');
     setSaveModalVisible(true);
   };
 
@@ -207,11 +209,23 @@ function App() {
     setSaveModalVisible(false);
     setPendingSavePayload(null);
     setSaveModalName('');
+    setSaveModalError('');
   };
 
   const handleSaveModalOk = () => {
     if (!pendingSavePayload) return;
-    const success = saveSearch(pendingSavePayload.type, pendingSavePayload.data, saveModalName);
+    const trimmedName = (saveModalName || '').trim();
+    if (!trimmedName) {
+      setSaveModalError('请输入搜索条件名称');
+      return;
+    }
+    const isDuplicate = savedSearches.some((item) => item.name === trimmedName);
+    if (isDuplicate) {
+      setSaveModalError('已存在相同名称的搜索设置，请使用不同名称命名新设置');
+      return;
+    }
+    setSaveModalError('');
+    const success = saveSearch(pendingSavePayload.type, pendingSavePayload.data, trimmedName);
     if (success) {
       closeSaveModal();
     }
@@ -219,6 +233,22 @@ function App() {
 
   const handleSaveModalCancel = () => {
     closeSaveModal();
+  };
+
+  const handleSaveNameInputChange = (e) => {
+    const value = e.target.value;
+    setSaveModalName(value);
+    const trimmed = (value || '').trim();
+    if (!trimmed) {
+      setSaveModalError('');
+      return;
+    }
+    const isDuplicate = savedSearches.some((item) => item.name === trimmed);
+    if (isDuplicate) {
+      setSaveModalError('已存在相同名称的搜索设置，请使用不同名称命名新设置');
+    } else {
+      setSaveModalError('');
+    }
   };
 
   const deleteSavedSearch = (id) => {
@@ -1603,11 +1633,16 @@ function App() {
           <Input
             placeholder="例如：常用-交互设计"
             value={saveModalName}
-            onChange={(e) => setSaveModalName(e.target.value)}
+            onChange={handleSaveNameInputChange}
             onPressEnter={handleSaveModalOk}
             maxLength={50}
             autoFocus
           />
+          {saveModalError && (
+            <Text type="danger" style={{ fontSize: 12 }}>
+              {saveModalError}
+            </Text>
+          )}
         </Space>
       </Modal>
       <Modal
