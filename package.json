@@ -34,7 +34,8 @@
       "renderer.js",
       "preload.js",
       "index.html",
-      "package.json"
+      "package.json",
+      "!data/**"
     ],
     "asar": true,
     "win": {
@@ -51,7 +52,8 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/nsis/data-dir.nsh"
     }
   }
 }
