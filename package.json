@@ -46,7 +46,7 @@
           ]
         }
       ],
-      "icon": "build/icons/logo.ico"
+      "icon": "build/icons/new.ico"
     },
     "nsis": {
       "oneClick": false,
