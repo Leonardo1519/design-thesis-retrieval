@@ -4,11 +4,47 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const http = require('http');
 const https = require('https');
+const packageJson = require('./package.json');
+
+const PRODUCT_NAME =
+  (packageJson && (packageJson.productName || packageJson.name)) ||
+  'DesignThesisRetrieval';
+
+const ensureUserDataBasePath = () => {
+  if (PRODUCT_NAME) {
+    try {
+      if (typeof app.setName === 'function' && app.getName() !== PRODUCT_NAME) {
+        app.setName(PRODUCT_NAME);
+      }
+    } catch (error) {
+      console.warn('设置应用名称失败，使用默认名称:', error);
+    }
+  }
+
+  if (typeof app.setPath !== 'function') {
+    return;
+  }
+
+  try {
+    const appDataDir = app.getPath('appData');
+    if (!appDataDir) {
+      return;
+    }
+    const desiredUserDataDir = path.join(appDataDir, PRODUCT_NAME || app.getName());
+    const currentUserDataDir = app.getPath('userData');
+    if (desiredUserDataDir && currentUserDataDir !== desiredUserDataDir) {
+      app.setPath('userData', desiredUserDataDir);
+    }
+  } catch (error) {
+    console.warn('设置 userData 目录失败，继续使用默认路径:', error);
+  }
+};
+
+ensureUserDataBasePath();
 
 const DATA_CONFIG_FILE = 'data-path.txt';
 const DOWNLOAD_CONFIG_FILE = 'download-path.txt';
-const DATA_ROOT_NAME = 'DesignThesisRetrieval';
-const DATA_SUB_DIR = 'data';
+const DATA_SUB_DIR = 'json-data';
 const DOWNLOAD_SUB_DIR = 'downloads';
 
 let mainWindow = null;
@@ -189,22 +225,31 @@ const buildDownloadFileName = (item = {}) => {
   return sanitized;
 };
 
-const getDefaultDataDir = () => {
+const getInstallBaseDir = () => {
   if (!app.isPackaged) {
-    return path.join(__dirname, DATA_SUB_DIR);
+    return __dirname;
   }
-  const documentsDir = app.getPath('documents') || app.getPath('downloads');
-  const baseDir = path.join(documentsDir, DATA_ROOT_NAME);
-  return ensureDataDirPath(baseDir);
+
+  try {
+    const exeDir = path.dirname(app.getPath('exe'));
+    if (exeDir) {
+      return exeDir;
+    }
+  } catch (error) {
+    console.warn('获取软件安装目录失败，已回退到 resources 目录:', error);
+  }
+
+  return path.resolve(process.resourcesPath || __dirname, '..');
+};
+
+const getDefaultDataDir = () => {
+  const baseDir = getInstallBaseDir();
+  return ensureDataDirPath(path.join(baseDir, DATA_SUB_DIR));
 };
 
 const getDefaultDownloadDir = () => {
-  if (!app.isPackaged) {
-    return path.join(__dirname, DOWNLOAD_SUB_DIR);
-  }
-  const documentsDir = app.getPath('documents') || app.getPath('downloads');
-  const baseDir = path.join(documentsDir, DATA_ROOT_NAME);
-  return ensureDownloadDirPath(baseDir);
+  const baseDir = getInstallBaseDir();
+  return ensureDownloadDirPath(path.join(baseDir, DOWNLOAD_SUB_DIR));
 };
 
 const getConfigFilePath = () => {
@@ -216,6 +261,22 @@ const getDownloadConfigFilePath = () => {
 };
 
 const ensureDirectory = async (targetPath) => {
+  if (!targetPath) {
+    throw new Error('无效的目录路径');
+  }
+
+  try {
+    const stats = await fsp.stat(targetPath);
+    if (stats.isDirectory()) {
+      return;
+    }
+    throw new Error(`目标路径已存在但不是文件夹: ${targetPath}`);
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
   await fsp.mkdir(targetPath, { recursive: true });
 };
 
@@ -539,6 +600,21 @@ const registerDataHandlers = () => {
       };
     } catch (error) {
       console.error('批量下载论文失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('settings:get-default-paths', async () => {
+    try {
+      const dataPath = getDefaultDataDir();
+      const downloadPath = getDefaultDownloadDir();
+      return {
+        success: true,
+        dataPath,
+        downloadPath
+      };
+    } catch (error) {
+      console.error('获取默认安装路径失败:', error);
       return { success: false, error: error.message };
     }
   });

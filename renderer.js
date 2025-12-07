@@ -119,6 +119,8 @@ function App() {
   const [changingDownloadDir, setChangingDownloadDir] = useState(false);
   const [dataDirPath, setDataDirPath] = useState('');
   const [downloadDirPath, setDownloadDirPath] = useState('');
+  const [defaultDataDirPath, setDefaultDataDirPath] = useState('');
+  const [defaultDownloadDirPath, setDefaultDownloadDirPath] = useState('');
   const [dataDirModalVisible, setDataDirModalVisible] = useState(false);
   const [downloadDirModalVisible, setDownloadDirModalVisible] = useState(false);
   const [dataDirModalLoading, setDataDirModalLoading] = useState(false);
@@ -138,8 +140,11 @@ function App() {
   const canChangeDataDir = !!(electronAPI && typeof electronAPI.pickDataDirectory === 'function');
   const canChangeDownloadDir = !!(electronAPI && typeof electronAPI.pickDownloadDirectory === 'function');
   const canDownloadPapers = !!(electronAPI && typeof electronAPI.downloadPapers === 'function');
+  const canFetchDefaultPaths = !!(electronAPI && typeof electronAPI.getDefaultPaths === 'function');
   const canViewAnyDir = canViewDataDir || canViewDownloadDir;
   const canChangeAnyDir = canChangeDataDir || canChangeDownloadDir;
+  const effectiveDataDirPath = dataDirPath || defaultDataDirPath;
+  const effectiveDownloadDirPath = downloadDirPath || defaultDownloadDirPath;
 
   // 关键输入框的 ref
   const simpleKeywordRefs = useRef({});
@@ -256,6 +261,30 @@ function App() {
     return Math.min(parsed, MAX_RESULTS_LIMIT);
   };
 
+  const fetchDefaultPaths = useCallback(async () => {
+    if (!canFetchDefaultPaths) {
+      return null;
+    }
+    try {
+      const result = await electronAPI.getDefaultPaths();
+      if (result && result.success) {
+        const dataPath = result.dataPath || '';
+        const downloadPath = result.downloadPath || '';
+        setDefaultDataDirPath(dataPath);
+        setDefaultDownloadDirPath(downloadPath);
+        setDataDirPath((prev) => prev || dataPath);
+        setDownloadDirPath((prev) => prev || downloadPath);
+        return { dataPath, downloadPath };
+      }
+      if (result && result.error) {
+        message.error(result.error || '获取默认安装路径失败');
+      }
+    } catch (error) {
+      message.error(`获取默认安装路径失败：${error.message}`);
+    }
+    return null;
+  }, [canFetchDefaultPaths, electronAPI]);
+
   const fetchDataDirectoryPath = useCallback(async () => {
     if (!canViewDataDir) {
       return '';
@@ -263,7 +292,7 @@ function App() {
     try {
       const result = await electronAPI.getDataDirectory();
       if (result && result.success) {
-        const pathValue = result.path || '';
+        const pathValue = result.path || defaultDataDirPath || '';
         setDataDirPath(pathValue);
         return pathValue;
       }
@@ -273,8 +302,12 @@ function App() {
     } catch (error) {
       message.error(`获取 data 路径失败：${error.message}`);
     }
+    if (defaultDataDirPath) {
+      setDataDirPath((prev) => prev || defaultDataDirPath);
+      return defaultDataDirPath;
+    }
     return '';
-  }, [canViewDataDir, electronAPI]);
+  }, [canViewDataDir, electronAPI, defaultDataDirPath]);
 
   const fetchDownloadDirectoryPath = useCallback(async () => {
     if (!canViewDownloadDir) {
@@ -283,7 +316,7 @@ function App() {
     try {
       const result = await electronAPI.getDownloadDirectory();
       if (result && result.success) {
-        const pathValue = result.path || '';
+        const pathValue = result.path || defaultDownloadDirPath || '';
         setDownloadDirPath(pathValue);
         return pathValue;
       }
@@ -293,16 +326,21 @@ function App() {
     } catch (error) {
       message.error(`获取下载路径失败：${error.message}`);
     }
+    if (defaultDownloadDirPath) {
+      setDownloadDirPath((prev) => prev || defaultDownloadDirPath);
+      return defaultDownloadDirPath;
+    }
     return '';
-  }, [canViewDownloadDir, electronAPI]);
+  }, [canViewDownloadDir, electronAPI, defaultDownloadDirPath]);
 
   useEffect(() => {
     if (!electronAPI) {
       return;
     }
+    fetchDefaultPaths();
     fetchDataDirectoryPath();
     fetchDownloadDirectoryPath();
-  }, [electronAPI, fetchDataDirectoryPath, fetchDownloadDirectoryPath]);
+  }, [electronAPI, fetchDataDirectoryPath, fetchDownloadDirectoryPath, fetchDefaultPaths]);
 
   const openDataDirModal = useCallback(async () => {
     if (!canViewDataDir) {
@@ -1568,7 +1606,7 @@ function App() {
       return;
     }
 
-    let targetDir = downloadDirPath;
+    let targetDir = downloadDirPath || defaultDownloadDirPath;
     if (!targetDir) {
       targetDir = await fetchDownloadDirectoryPath();
     }
@@ -2349,9 +2387,9 @@ function App() {
               <Tag color="purple">已选 {selectedPaperKeys.length} 篇</Tag>
             )}
             {canDownloadPapers && (
-              <Tooltip title={downloadDirPath || '请前往 Setting 设置下载路径'}>
+              <Tooltip title={effectiveDownloadDirPath || '请前往 Setting 设置下载路径'}>
                 <Text type="secondary" style={{ fontSize: 12 }}>
-                  下载路径：{downloadDirPath || '尚未配置，请在 Setting 中设置'}
+                  下载路径：{effectiveDownloadDirPath || '尚未配置，请在 Setting 中设置'}
                 </Text>
               </Tooltip>
             )}
@@ -2492,9 +2530,9 @@ function App() {
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
             <div>
               <Text type="secondary">当前路径</Text>
-              {dataDirPath ? (
+              {effectiveDataDirPath ? (
                 <Paragraph
-                  copyable={{ text: dataDirPath }}
+                  copyable={{ text: effectiveDataDirPath }}
                   style={{
                     background: '#fafafa',
                     padding: '8px 12px',
@@ -2502,7 +2540,7 @@ function App() {
                     marginBottom: 0
                   }}
                 >
-                  {dataDirPath}
+                  {effectiveDataDirPath}
                 </Paragraph>
               ) : (
                 <Paragraph
@@ -2566,9 +2604,9 @@ function App() {
           <Space direction="vertical" style={{ width: '100%' }} size="middle">
             <div>
               <Text type="secondary">当前路径</Text>
-              {downloadDirPath ? (
+              {effectiveDownloadDirPath ? (
                 <Paragraph
-                  copyable={{ text: downloadDirPath }}
+                  copyable={{ text: effectiveDownloadDirPath }}
                   style={{
                     background: '#fafafa',
                     padding: '8px 12px',
@@ -2576,7 +2614,7 @@ function App() {
                     marginBottom: 0
                   }}
                 >
-                  {downloadDirPath}
+                  {effectiveDownloadDirPath}
                 </Paragraph>
               ) : (
                 <Paragraph

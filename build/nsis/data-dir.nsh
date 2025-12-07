@@ -1,167 +1,104 @@
-!ifndef BUILD_UNINSTALLER
-Var DataDirPageHandle
-Var DataDirInputHandle
-Var DataDirBrowseButtonHandle
-!endif
-Var SelectedDataDir
+!define DATA_FOLDER_NAME "json-data"
+!define DOWNLOAD_FOLDER_NAME "downloads"
+!define LOCAL_STORAGE_FOLDER_NAME "LocalStorage"
+!define LOCAL_STORAGE_LEGACY_FOLDER_NAME "Local Storage"
+!define DATA_CONFIG_FILE "data-path.txt"
+!define DOWNLOAD_CONFIG_FILE "download-path.txt"
+
 Var DataConfigPath
+Var DownloadConfigPath
+Var SelectedDataDir
+Var SelectedDownloadDir
 
-!define DATA_FOLDER_NAME "data"
+; 允许根目录安装，避免安装按钮被禁用
+AllowRootDirInstall true
 
-!ifdef BUILD_UNINSTALLER
-  !define EnsureDataFolderSuffixFunc "un.EnsureDataFolderSuffix"
-!else
-  !define EnsureDataFolderSuffixFunc "EnsureDataFolderSuffix"
-!endif
-
-!include "nsDialogs.nsh"
-
-!macro preInit
-  StrCpy $DataConfigPath "$APPDATA\${PRODUCT_NAME}\data-path.txt"
-  StrCpy $SelectedDataDir ""
+!macro SetAppDataConfigPaths
+  SetShellVarContext current
+  StrCpy $DataConfigPath "$APPDATA\${PRODUCT_NAME}\${DATA_CONFIG_FILE}"
+  StrCpy $DownloadConfigPath "$APPDATA\${PRODUCT_NAME}\${DOWNLOAD_CONFIG_FILE}"
 !macroend
 
-Function ${EnsureDataFolderSuffixFunc}
-  Exch $0
-  Push $1
-  Push $2
-  Push $3
-
-  StrCpy $1 $0
-  ${If} $1 == ""
-    Goto efs_done
-  ${EndIf}
-
-efs_trim:
-  StrCpy $2 $1 1 -1
-  ${If} $2 == "\"
-  ${OrIf} $2 == "/"
-    StrCpy $1 $1 "" -1
-    Goto efs_trim
-  ${EndIf}
-
-  StrLen $3 $1
-  IntCmp $3 5 efs_checkSuffix efs_append efs_checkSuffix
-
-efs_checkSuffix:
-  StrCpy $2 $1 5 -5
-  ${If} $2 == "\${DATA_FOLDER_NAME}"
-  ${OrIf} $2 == "/${DATA_FOLDER_NAME}"
-    StrCpy $0 $1
-    Goto efs_done
-  ${EndIf}
-
-efs_append:
-  StrCpy $0 "$1\${DATA_FOLDER_NAME}"
-
-efs_done:
-  Pop $3
-  Pop $2
-  Pop $1
-  Exch $0
-FunctionEnd
+!macro preInit
+  !insertmacro SetAppDataConfigPaths
+  StrCpy $SelectedDataDir ""
+  StrCpy $SelectedDownloadDir ""
+!macroend
 
 !macro customInit
-  ${If} $SelectedDataDir == ""
-    StrCpy $SelectedDataDir "$DOCUMENTS\DesignThesisRetrieval\data"
-  ${EndIf}
-  ${If} ${FileExists} "$DataConfigPath"
-    FileOpen $0 "$DataConfigPath" r
-    FileRead $0 $SelectedDataDir
-    FileClose $0
-  ${EndIf}
-  ${If} $SelectedDataDir == ""
-    StrCpy $SelectedDataDir "$DOCUMENTS\DesignThesisRetrieval\data"
-  ${EndIf}
-  Push $SelectedDataDir
-  Call ${EnsureDataFolderSuffixFunc}
-  Pop $SelectedDataDir
+  ; no custom UI initialization required
 !macroend
 
 !macro customPageAfterChangeDir
-  !ifndef BUILD_UNINSTALLER
-    Page custom DataDirPageShow DataDirPageLeave
-  !endif
+  ; keep hook for electron-builder but no extra page is inserted
 !macroend
 
-!ifndef BUILD_UNINSTALLER
-Function DataDirPageShow
-  nsDialogs::Create 1018
-  Pop $DataDirPageHandle
-  ${If} $DataDirPageHandle == error
-    Abort
-  ${EndIf}
-
-  ${NSD_CreateLabel} 0 0 100% 24u "请选择 data 文件夹存放路径，可直接使用默认位置。"
-  Pop $0
-
-  ${NSD_CreateDirRequest} 0 28u 75% 14u "$SelectedDataDir"
-  Pop $DataDirInputHandle
-
-  ${NSD_CreateButton} 80% 28u 20% 14u "自定义位置..."
-  Pop $DataDirBrowseButtonHandle
-  ${NSD_OnClick} $DataDirBrowseButtonHandle DataDirBrowseButtonClicked
-
-  nsDialogs::Show
-FunctionEnd
-
-Function DataDirBrowseButtonClicked
-  ${NSD_GetText} $DataDirInputHandle $0
-  nsDialogs::SelectFolderDialog "请选择 data 文件夹路径" $0
-  Pop $1
-  ${If} $1 == error
-    Return
-  ${EndIf}
-  StrCpy $SelectedDataDir $1
-  Push $SelectedDataDir
-  Call ${EnsureDataFolderSuffixFunc}
-  Pop $SelectedDataDir
-  ${NSD_SetText} $DataDirInputHandle $SelectedDataDir
-FunctionEnd
-
-Function DataDirPageLeave
-  ${NSD_GetText} $DataDirInputHandle $SelectedDataDir
-  Push $SelectedDataDir
-  Call ${EnsureDataFolderSuffixFunc}
-  Pop $SelectedDataDir
-  ${If} $SelectedDataDir == ""
-    MessageBox MB_ICONEXCLAMATION "请选择有效的 data 文件夹路径。"
-    Abort
-  ${EndIf}
-FunctionEnd
-!endif
-
 !macro customInstall
-  ${If} $SelectedDataDir == ""
-    StrCpy $SelectedDataDir "$DOCUMENTS\DesignThesisRetrieval\data"
-  ${EndIf}
-  Push $SelectedDataDir
-  Call ${EnsureDataFolderSuffixFunc}
-  Pop $SelectedDataDir
+  !insertmacro SetAppDataConfigPaths
+
+  StrCpy $SelectedDataDir "$INSTDIR\${DATA_FOLDER_NAME}"
+  StrCpy $SelectedDownloadDir "$INSTDIR\${DOWNLOAD_FOLDER_NAME}"
+
   CreateDirectory "$SelectedDataDir"
+  CreateDirectory "$SelectedDownloadDir"
   CreateDirectory "$APPDATA\${PRODUCT_NAME}"
+
   FileOpen $0 "$DataConfigPath" w
   FileWrite $0 "$SelectedDataDir"
   FileClose $0
+
+  FileOpen $1 "$DownloadConfigPath" w
+  FileWrite $1 "$SelectedDownloadDir"
+  FileClose $1
 !macroend
 
 !macro customUnInstall
+  !insertmacro SetAppDataConfigPaths
+
   StrCpy $SelectedDataDir ""
+  StrCpy $SelectedDownloadDir ""
+
   ${If} ${FileExists} "$DataConfigPath"
     FileOpen $0 "$DataConfigPath" r
     FileRead $0 $SelectedDataDir
     FileClose $0
   ${EndIf}
-  Push $SelectedDataDir
-  Call ${EnsureDataFolderSuffixFunc}
-  Pop $SelectedDataDir
+
+  ${If} ${FileExists} "$DownloadConfigPath"
+    FileOpen $1 "$DownloadConfigPath" r
+    FileRead $1 $SelectedDownloadDir
+    FileClose $1
+  ${EndIf}
+
+  ${If} $SelectedDataDir == ""
+    StrCpy $SelectedDataDir "$INSTDIR\${DATA_FOLDER_NAME}"
+  ${EndIf}
+
+  ${If} $SelectedDownloadDir == ""
+    StrCpy $SelectedDownloadDir "$INSTDIR\${DOWNLOAD_FOLDER_NAME}"
+  ${EndIf}
 
   ${If} $SelectedDataDir != ""
-    MessageBox MB_ICONQUESTION|MB_YESNO "是否要删除 data 文件夹相关数据？$\n$SelectedDataDir" IDNO skipDelete
+    MessageBox MB_ICONQUESTION|MB_YESNO "是否要删除爬取数据 json 文件？$\n$SelectedDataDir" IDNO skipDeleteData
     RMDir /r "$SelectedDataDir"
-    skipDelete:
+    skipDeleteData:
+  ${EndIf}
+
+  ${If} $SelectedDownloadDir != ""
+    MessageBox MB_ICONQUESTION|MB_YESNO "是否要删除下载论文文件？$\n$SelectedDownloadDir" IDNO skipDeleteDownload
+    RMDir /r "$SelectedDownloadDir"
+    skipDeleteDownload:
   ${EndIf}
 
   Delete "$DataConfigPath"
+  Delete "$DownloadConfigPath"
+
+  ${If} ${FileExists} "$APPDATA\${PRODUCT_NAME}\${LOCAL_STORAGE_FOLDER_NAME}"
+    RMDir /r "$APPDATA\${PRODUCT_NAME}\${LOCAL_STORAGE_FOLDER_NAME}"
+  ${EndIf}
+
+  ${If} ${FileExists} "$APPDATA\${PRODUCT_NAME}\${LOCAL_STORAGE_LEGACY_FOLDER_NAME}"
+    RMDir /r "$APPDATA\${PRODUCT_NAME}\${LOCAL_STORAGE_LEGACY_FOLDER_NAME}"
+  ${EndIf}
 !macroend
 

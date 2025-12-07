@@ -7,7 +7,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "set NODE_ENV=development && electron .",
-    "dist:win": "electron-builder --win --x64"
+    "clean": "powershell -Command \"if (Test-Path dist) { Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue }\"",
+    "dist:win": "npm run clean && electron-builder --win --x64"
   },
   "keywords": [],
   "author": "",
@@ -35,7 +36,7 @@
       "preload.js",
       "index.html",
       "package.json",
-      "!data/**"
+      "!json-data/**"
     ],
     "asar": true,
     "win": {

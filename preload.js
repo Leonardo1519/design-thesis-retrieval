@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pickDataDirectory: () => ipcRenderer.invoke('data:pick-directory'),
   getDownloadDirectory: () => ipcRenderer.invoke('downloads:get-directory'),
   pickDownloadDirectory: () => ipcRenderer.invoke('downloads:pick-directory'),
-  downloadPapers: (payload) => ipcRenderer.invoke('downloads:download-papers', payload)
+  downloadPapers: (payload) => ipcRenderer.invoke('downloads:download-papers', payload),
+  getDefaultPaths: () => ipcRenderer.invoke('settings:get-default-paths')
 });
 
