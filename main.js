@@ -44,8 +44,10 @@ ensureUserDataBasePath();
 
 const DATA_CONFIG_FILE = 'data-path.txt';
 const DOWNLOAD_CONFIG_FILE = 'download-path.txt';
-const DATA_SUB_DIR = 'json-data';
-const DOWNLOAD_SUB_DIR = 'downloads';
+const DATA_SUB_DIR = 'D-json-data';
+const DOWNLOAD_SUB_DIR = 'D-downloads';
+const LEGACY_DATA_SUB_DIRS = ['json-data'];
+const LEGACY_DOWNLOAD_SUB_DIRS = ['downloads'];
 
 let mainWindow = null;
 
@@ -86,13 +88,13 @@ const buildPaperKey = (paper = {}) => {
   return `${title}::${published}`;
 };
 
-const ensureDirPathWithSuffix = (inputPath, suffix) => {
+const ensureDirPathWithSuffix = (inputPath, suffix, legacySuffixes = []) => {
   if (!inputPath || typeof inputPath !== 'string') {
-    return '';
+    return { targetPath: '', legacyPath: '' };
   }
   let normalized = path.normalize(inputPath.trim());
   if (!normalized) {
-    return '';
+    return { targetPath: '', legacyPath: '' };
   }
 
   // 移除末尾的分隔符
@@ -100,23 +102,40 @@ const ensureDirPathWithSuffix = (inputPath, suffix) => {
     normalized = normalized.slice(0, -1);
   }
 
-  const lowerNormalized = normalized.toLowerCase();
-  const primarySuffix = `${path.sep}${suffix}`.toLowerCase();
-  const secondarySuffix = `${path.posix.sep}${suffix}`.toLowerCase();
-
-  if (lowerNormalized.endsWith(primarySuffix) || lowerNormalized.endsWith(secondarySuffix)) {
-    return normalized;
+  if (!normalized) {
+    return { targetPath: '', legacyPath: '' };
   }
 
-  return path.join(normalized, suffix);
+  const lowerSuffix = (suffix || '').toLowerCase();
+  const baseName = path.basename(normalized);
+  const lowerBaseName = baseName.toLowerCase();
+
+  if (lowerBaseName === lowerSuffix) {
+    return { targetPath: normalized, legacyPath: '' };
+  }
+
+  for (const legacySuffix of legacySuffixes) {
+    if ((legacySuffix || '').toLowerCase() === lowerBaseName) {
+      const parentDir = path.dirname(normalized);
+      return {
+        targetPath: path.join(parentDir, suffix),
+        legacyPath: normalized,
+      };
+    }
+  }
+
+  return {
+    targetPath: path.join(normalized, suffix),
+    legacyPath: '',
+  };
 };
 
 const ensureDataDirPath = (inputPath) => {
-  return ensureDirPathWithSuffix(inputPath, DATA_SUB_DIR);
+  return ensureDirPathWithSuffix(inputPath, DATA_SUB_DIR, LEGACY_DATA_SUB_DIRS);
 };
 
 const ensureDownloadDirPath = (inputPath) => {
-  return ensureDirPathWithSuffix(inputPath, DOWNLOAD_SUB_DIR);
+  return ensureDirPathWithSuffix(inputPath, DOWNLOAD_SUB_DIR, LEGACY_DOWNLOAD_SUB_DIRS);
 };
 
 const MAX_DOWNLOAD_REDIRECTS = 5;
@@ -186,18 +205,72 @@ const downloadFile = (fileUrl, destinationPath, redirectCount = 0) => {
   });
 };
 
-const ensureUniqueFilePath = async (directory, fileName) => {
+const loadExistingDownloadFileNames = async (directory) => {
+  try {
+    const entries = await fsp.readdir(directory, { withFileTypes: true });
+    const nameSet = new Set();
+    entries.forEach((entry) => {
+      if (!entry) {
+        return;
+      }
+      if (typeof entry.isFile === 'function' && !entry.isFile()) {
+        return;
+      }
+      nameSet.add(entry.name.toLowerCase());
+    });
+    return nameSet;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return new Set();
+    }
+    throw error;
+  }
+};
+
+const createTempDownloadPath = (directory, fileName) => {
   const ext = path.extname(fileName) || '.pdf';
   const baseName = path.basename(fileName, ext);
-  let counter = 1;
-  let candidate = `${baseName}${ext}`;
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return path.join(directory, `${baseName}.downloading-${uniqueSuffix}${ext}`);
+};
 
-  while (await fileExists(path.join(directory, candidate))) {
-    candidate = `${baseName}-${counter}${ext}`;
-    counter += 1;
-  }
+const moveFileReplacingTarget = async (sourcePath, targetPath) => {
+  const tryRename = async () => {
+    try {
+      await fsp.rename(sourcePath, targetPath);
+    } catch (error) {
+      if (error && error.code === 'EEXIST') {
+        try {
+          await fsp.unlink(targetPath);
+        } catch (unlinkError) {
+          if (!unlinkError || unlinkError.code !== 'ENOENT') {
+            throw unlinkError;
+          }
+        }
+        await tryRename();
+        return;
+      }
+      if (error && error.code === 'EXDEV') {
+        await fsp.copyFile(sourcePath, targetPath);
+        try {
+          await fsp.unlink(sourcePath);
+        } catch (unlinkError) {
+          if (!unlinkError || unlinkError.code !== 'ENOENT') {
+            throw unlinkError;
+          }
+        }
+        return;
+      }
+      if (error && error.code === 'ENOTEMPTY') {
+        await fsp.rm(targetPath, { recursive: true, force: true });
+        await tryRename();
+        return;
+      }
+      throw error;
+    }
+  };
 
-  return path.join(directory, candidate);
+  await tryRename();
 };
 
 const buildDownloadFileName = (item = {}) => {
@@ -231,25 +304,39 @@ const getInstallBaseDir = () => {
   }
 
   try {
-    const exeDir = path.dirname(app.getPath('exe'));
-    if (exeDir) {
-      return exeDir;
+    const exePath = app.getPath('exe');
+    if (exePath) {
+      const installDir = path.dirname(exePath);
+      if (installDir) {
+        const parentDir = path.dirname(installDir);
+        if (parentDir && parentDir !== installDir) {
+          return parentDir;
+        }
+        return installDir;
+      }
     }
   } catch (error) {
-    console.warn('获取软件安装目录失败，已回退到 resources 目录:', error);
+    console.warn('获取软件安装根目录失败，已尝试使用回退路径:', error);
   }
 
-  return path.resolve(process.resourcesPath || __dirname, '..');
+  const resourcesRoot = path.resolve(process.resourcesPath || __dirname, '..');
+  const fallbackParent = path.dirname(resourcesRoot);
+  if (fallbackParent && fallbackParent !== resourcesRoot) {
+    return fallbackParent;
+  }
+  return resourcesRoot;
 };
 
 const getDefaultDataDir = () => {
   const baseDir = getInstallBaseDir();
-  return ensureDataDirPath(path.join(baseDir, DATA_SUB_DIR));
+  const { targetPath } = ensureDataDirPath(path.join(baseDir, DATA_SUB_DIR));
+  return targetPath;
 };
 
 const getDefaultDownloadDir = () => {
   const baseDir = getInstallBaseDir();
-  return ensureDownloadDirPath(path.join(baseDir, DOWNLOAD_SUB_DIR));
+  const { targetPath } = ensureDownloadDirPath(path.join(baseDir, DOWNLOAD_SUB_DIR));
+  return targetPath;
 };
 
 const getConfigFilePath = () => {
@@ -289,6 +376,55 @@ const fileExists = async (targetPath) => {
   }
 };
 
+const migrateLegacyDirectory = async (legacyPath, targetPath) => {
+  if (!legacyPath || !targetPath || legacyPath === targetPath) {
+    return;
+  }
+
+  try {
+    const stats = await fsp.stat(legacyPath);
+    if (!stats.isDirectory()) {
+      return;
+    }
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return;
+    }
+    console.warn('检测旧目录失败:', error);
+    return;
+  }
+
+  if (await fileExists(targetPath)) {
+    return;
+  }
+
+  try {
+    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+    await fsp.rename(legacyPath, targetPath);
+  } catch (error) {
+    console.warn(`迁移旧目录失败: ${legacyPath} -> ${targetPath}`, error);
+  }
+};
+
+const migrateLegacySiblingDirectories = async (targetPath, legacyNames = []) => {
+  if (!targetPath || !Array.isArray(legacyNames) || legacyNames.length === 0) {
+    return;
+  }
+
+  const parentDir = path.dirname(targetPath);
+  if (!parentDir) {
+    return;
+  }
+
+  for (const legacyName of legacyNames) {
+    if (!legacyName) {
+      continue;
+    }
+    const legacyCandidate = path.join(parentDir, legacyName);
+    await migrateLegacyDirectory(legacyCandidate, targetPath);
+  }
+};
+
 const writeDataConfigPath = async (dir) => {
   const configPath = getConfigFilePath();
   await fsp.mkdir(path.dirname(configPath), { recursive: true });
@@ -301,24 +437,26 @@ const writeDownloadConfigPath = async (dir) => {
   await fsp.writeFile(configPath, dir, 'utf8');
 };
 
-const updateDataDirectory = async (targetPath) => {
-  const sanitized = ensureDataDirPath(targetPath);
-  if (!sanitized) {
+const updateDataDirectory = async (inputPath) => {
+  const { targetPath, legacyPath } = ensureDataDirPath(inputPath);
+  if (!targetPath) {
     throw new Error('无效的 data 路径');
   }
-  await ensureDirectory(sanitized);
-  await writeDataConfigPath(sanitized);
-  return sanitized;
+  await migrateLegacyDirectory(legacyPath, targetPath);
+  await ensureDirectory(targetPath);
+  await writeDataConfigPath(targetPath);
+  return targetPath;
 };
 
-const updateDownloadDirectory = async (targetPath) => {
-  const sanitized = ensureDownloadDirPath(targetPath);
-  if (!sanitized) {
+const updateDownloadDirectory = async (inputPath) => {
+  const { targetPath, legacyPath } = ensureDownloadDirPath(inputPath);
+  if (!targetPath) {
     throw new Error('无效的下载路径');
   }
-  await ensureDirectory(sanitized);
-  await writeDownloadConfigPath(sanitized);
-  return sanitized;
+  await migrateLegacyDirectory(legacyPath, targetPath);
+  await ensureDirectory(targetPath);
+  await writeDownloadConfigPath(targetPath);
+  return targetPath;
 };
 
 const resolveDataDirectory = async () => {
@@ -328,17 +466,18 @@ const resolveDataDirectory = async () => {
       const raw = await fsp.readFile(configPath, 'utf8');
       const trimmed = raw.trim();
       if (trimmed) {
-        const resolvedPath = ensureDataDirPath(trimmed);
-        if (resolvedPath) {
-          await ensureDirectory(resolvedPath);
-          if (resolvedPath !== trimmed) {
+        const { targetPath, legacyPath } = ensureDataDirPath(trimmed);
+        if (targetPath) {
+          await migrateLegacyDirectory(legacyPath, targetPath);
+          await ensureDirectory(targetPath);
+          if (targetPath !== trimmed) {
             try {
-              await writeDataConfigPath(resolvedPath);
+              await writeDataConfigPath(targetPath);
             } catch (writeError) {
               console.warn('更新 data 路径配置失败:', writeError);
             }
           }
-          return resolvedPath;
+          return targetPath;
         }
       }
     } catch (error) {
@@ -347,6 +486,7 @@ const resolveDataDirectory = async () => {
   }
 
   const fallback = getDefaultDataDir();
+  await migrateLegacySiblingDirectories(fallback, LEGACY_DATA_SUB_DIRS);
   await ensureDirectory(fallback);
 
   try {
@@ -365,17 +505,18 @@ const resolveDownloadDirectory = async () => {
       const raw = await fsp.readFile(configPath, 'utf8');
       const trimmed = raw.trim();
       if (trimmed) {
-        const resolvedPath = ensureDownloadDirPath(trimmed);
-        if (resolvedPath) {
-          await ensureDirectory(resolvedPath);
-          if (resolvedPath !== trimmed) {
+        const { targetPath, legacyPath } = ensureDownloadDirPath(trimmed);
+        if (targetPath) {
+          await migrateLegacyDirectory(legacyPath, targetPath);
+          await ensureDirectory(targetPath);
+          if (targetPath !== trimmed) {
             try {
-              await writeDownloadConfigPath(resolvedPath);
+              await writeDownloadConfigPath(targetPath);
             } catch (writeError) {
               console.warn('更新下载路径配置失败:', writeError);
             }
           }
-          return resolvedPath;
+          return targetPath;
         }
       }
     } catch (error) {
@@ -384,6 +525,7 @@ const resolveDownloadDirectory = async () => {
   }
 
   const fallback = getDefaultDownloadDir();
+  await migrateLegacySiblingDirectories(fallback, LEGACY_DOWNLOAD_SUB_DIRS);
   await ensureDirectory(fallback);
 
   try {
@@ -512,6 +654,26 @@ const registerDataHandlers = () => {
     }
   });
 
+  ipcMain.handle('data:update-directory', async (_event, payload) => {
+    try {
+      const requestedPath =
+        typeof payload === 'string'
+          ? payload
+          : payload && typeof payload.path === 'string'
+            ? payload.path
+            : '';
+      const trimmedPath = (requestedPath || '').trim();
+      if (!trimmedPath) {
+        return { success: false, error: '无效的 data 路径' };
+      }
+      const updatedPath = await updateDataDirectory(trimmedPath);
+      return { success: true, path: updatedPath };
+    } catch (error) {
+      console.error('直接更新 data 路径失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('downloads:get-directory', async () => {
     try {
       const dir = await resolveDownloadDirectory();
@@ -544,6 +706,26 @@ const registerDataHandlers = () => {
     }
   });
 
+  ipcMain.handle('downloads:update-directory', async (_event, payload) => {
+    try {
+      const requestedPath =
+        typeof payload === 'string'
+          ? payload
+          : payload && typeof payload.path === 'string'
+            ? payload.path
+            : '';
+      const trimmedPath = (requestedPath || '').trim();
+      if (!trimmedPath) {
+        return { success: false, error: '无效的下载路径' };
+      }
+      const updatedPath = await updateDownloadDirectory(trimmedPath);
+      return { success: true, path: updatedPath };
+    } catch (error) {
+      console.error('直接更新下载路径失败:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('downloads:download-papers', async (_event, payload = {}) => {
     try {
       const items = Array.isArray(payload.items) ? payload.items : [];
@@ -559,6 +741,7 @@ const registerDataHandlers = () => {
 
       const downloaded = [];
       const failed = [];
+      const existingDownloadNames = await loadExistingDownloadFileNames(directory);
 
       for (const item of items) {
         const { downloadUrl, id, title, rowKey } = item || {};
@@ -572,17 +755,29 @@ const registerDataHandlers = () => {
           continue;
         }
 
+        const fileName = buildDownloadFileName(item);
+        const normalizedFileKey = fileName.toLowerCase();
+        const destinationPath = path.join(directory, fileName);
+        const tempPath = createTempDownloadPath(directory, fileName);
+        const replacingExisting = existingDownloadNames.has(normalizedFileKey);
+
         try {
-          const fileName = buildDownloadFileName(item);
-          const destinationPath = await ensureUniqueFilePath(directory, fileName);
-          await downloadFile(downloadUrl, destinationPath);
+          await downloadFile(downloadUrl, tempPath);
+          await moveFileReplacingTarget(tempPath, destinationPath);
+          existingDownloadNames.add(normalizedFileKey);
           downloaded.push({
             id,
             title,
             rowKey,
-            filePath: destinationPath
+            filePath: destinationPath,
+            replacedExisting: replacingExisting
           });
         } catch (error) {
+          try {
+            await fsp.unlink(tempPath);
+          } catch (_) {
+            // ignore cleanup error
+          }
           failed.push({
             id,
             title,
@@ -592,8 +787,13 @@ const registerDataHandlers = () => {
         }
       }
 
+      const hasSuccess = downloaded.length > 0;
+      const hasFailure = failed.length > 0;
+      const status = hasFailure ? (hasSuccess ? 'partial' : 'failed') : 'success';
+
       return {
-        success: failed.length === 0,
+        success: hasSuccess,
+        status,
         directory,
         downloaded,
         failed

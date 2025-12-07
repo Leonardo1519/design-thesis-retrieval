@@ -36,7 +36,11 @@
       "preload.js",
       "index.html",
       "package.json",
-      "!json-data/**"
+      "build/icons/**",
+      "!D-json-data/**",
+      "!json-data/**",
+      "!D-downloads/**",
+      "!downloads/**"
     ],
     "asar": true,
     "win": {

@@ -91,6 +91,8 @@ function App() {
   const [advancedMaxResults, setAdvancedMaxResults] = useState('');
   // 用于强制重置高级搜索输入框
   const [advancedVersion, setAdvancedVersion] = useState(0);
+  const [simpleHasContent, setSimpleHasContent] = useState(false);
+  const [advancedHasContent, setAdvancedHasContent] = useState(false);
 
   // 已保存搜索条件（设置页使用）
   const [savedSearches, setSavedSearches] = useState([]);
@@ -127,6 +129,10 @@ function App() {
   const [downloadDirModalLoading, setDownloadDirModalLoading] = useState(false);
   const [pendingDataDirMessage, setPendingDataDirMessage] = useState('');
   const [pendingDownloadDirMessage, setPendingDownloadDirMessage] = useState('');
+  const [dataDirUndoPath, setDataDirUndoPath] = useState('');
+  const [downloadDirUndoPath, setDownloadDirUndoPath] = useState('');
+  const [revertingDataDir, setRevertingDataDir] = useState(false);
+  const [revertingDownloadDir, setRevertingDownloadDir] = useState(false);
   const [selectedPaperKeys, setSelectedPaperKeys] = useState([]);
   const [batchDownloading, setBatchDownloading] = useState(false);
   const [tablePagination, setTablePagination] = useState({
@@ -139,6 +145,8 @@ function App() {
   const canViewDownloadDir = !!(electronAPI && typeof electronAPI.getDownloadDirectory === 'function');
   const canChangeDataDir = !!(electronAPI && typeof electronAPI.pickDataDirectory === 'function');
   const canChangeDownloadDir = !!(electronAPI && typeof electronAPI.pickDownloadDirectory === 'function');
+  const canRollbackDataDir = !!(electronAPI && typeof electronAPI.updateDataDirectory === 'function');
+  const canRollbackDownloadDir = !!(electronAPI && typeof electronAPI.updateDownloadDirectory === 'function');
   const canDownloadPapers = !!(electronAPI && typeof electronAPI.downloadPapers === 'function');
   const canFetchDefaultPaths = !!(electronAPI && typeof electronAPI.getDefaultPaths === 'function');
   const canViewAnyDir = canViewDataDir || canViewDownloadDir;
@@ -153,6 +161,65 @@ function App() {
   const advancedMaxResultsRef = useRef(null);
   const [simpleMaxFocused, setSimpleMaxFocused] = useState(false);
   const [advancedMaxFocused, setAdvancedMaxFocused] = useState(false);
+
+  const getSimpleKeywordValues = useCallback(() => {
+    return conditions.map((condition) => {
+      const refEl = simpleKeywordRefs.current[condition.id];
+      const inputEl = refEl ? (refEl.input || refEl) : null;
+      if (inputEl && typeof inputEl.value === 'string') {
+        return inputEl.value;
+      }
+      return condition.keyword || '';
+    });
+  }, [conditions]);
+
+  const getAdvancedQueryValue = useCallback(() => {
+    if (advancedQueryRef.current) {
+      const el = advancedQueryRef.current.resizableTextArea
+        ? advancedQueryRef.current.resizableTextArea.textArea
+        : advancedQueryRef.current;
+      if (el && typeof el.value === 'string') {
+        return el.value;
+      }
+    }
+    return advancedQuery || '';
+  }, [advancedQuery]);
+
+  const computeSimpleHasContent = useCallback(() => {
+    const keywordValues = getSimpleKeywordValues();
+    const hasKeyword = keywordValues.some((kw) => (kw || '').trim() !== '');
+    let maxValue = '';
+    if (simpleMaxResultsRef.current && simpleMaxResultsRef.current.value !== undefined) {
+      maxValue = simpleMaxResultsRef.current.value;
+    } else if (maxResults !== undefined && maxResults !== null) {
+      maxValue = maxResults;
+    }
+    const hasMax = String(maxValue || '').trim() !== '';
+    const next = hasKeyword || hasMax;
+    setSimpleHasContent((prev) => (prev === next ? prev : next));
+  }, [getSimpleKeywordValues, maxResults]);
+
+  const computeAdvancedHasContent = useCallback(() => {
+    const queryValue = getAdvancedQueryValue();
+    const hasKeyword = (queryValue || '').trim() !== '';
+    let maxValue = '';
+    if (advancedMaxResultsRef.current && advancedMaxResultsRef.current.value !== undefined) {
+      maxValue = advancedMaxResultsRef.current.value;
+    } else if (advancedMaxResults !== undefined && advancedMaxResults !== null) {
+      maxValue = advancedMaxResults;
+    }
+    const hasMax = String(maxValue || '').trim() !== '';
+    const next = hasKeyword || hasMax;
+    setAdvancedHasContent((prev) => (prev === next ? prev : next));
+  }, [getAdvancedQueryValue, advancedMaxResults]);
+
+  const handleSimpleKeywordInputChange = useCallback(() => {
+    computeSimpleHasContent();
+  }, [computeSimpleHasContent]);
+
+  const handleAdvancedQueryInputChange = useCallback(() => {
+    computeAdvancedHasContent();
+  }, [computeAdvancedHasContent]);
 
   // 格式化日期
   const formatDate = (dateString) => {
@@ -235,6 +302,14 @@ function App() {
       }
     });
   }, [advancedMaxResults, advancedMaxFocused]);
+
+  useEffect(() => {
+    computeSimpleHasContent();
+  }, [computeSimpleHasContent, simpleVersion]);
+
+  useEffect(() => {
+    computeAdvancedHasContent();
+  }, [computeAdvancedHasContent, advancedVersion]);
 
   useEffect(() => {
     setSelectedPaperKeys([]);
@@ -370,10 +445,44 @@ function App() {
     }
   }, [canViewDownloadDir, fetchDownloadDirectoryPath]);
 
-  const handleDataDirModalCancel = useCallback(() => {
-    setDataDirModalVisible(false);
-    setPendingDataDirMessage('');
-  }, []);
+  const attemptRevertDataDirectory = useCallback(async () => {
+    if (!dataDirUndoPath) {
+      return true;
+    }
+    if (!canRollbackDataDir || !electronAPI || typeof electronAPI.updateDataDirectory !== 'function') {
+      message.warning('当前运行环境暂不支持撤销 data 路径修改');
+      return false;
+    }
+    setRevertingDataDir(true);
+    try {
+      const result = await electronAPI.updateDataDirectory(dataDirUndoPath);
+      if (!result || !result.success) {
+        message.error((result && result.error) || '撤销 data 路径失败');
+        return false;
+      }
+      const restoredPath = result.path || dataDirUndoPath;
+      setDataDirPath(restoredPath);
+      setPendingDataDirMessage('');
+      setDataDirUndoPath('');
+      return true;
+    } catch (error) {
+      message.error(`撤销 data 路径失败：${error.message}`);
+      return false;
+    } finally {
+      setRevertingDataDir(false);
+    }
+  }, [dataDirUndoPath, canRollbackDataDir, electronAPI]);
+
+  const handleDataDirModalCancel = useCallback(async () => {
+    if (changingDataDir || revertingDataDir) {
+      return;
+    }
+    const success = await attemptRevertDataDirectory();
+    if (success) {
+      setDataDirModalVisible(false);
+      setPendingDataDirMessage('');
+    }
+  }, [attemptRevertDataDirectory, changingDataDir, revertingDataDir]);
 
   const handleDataDirModalConfirm = useCallback(() => {
     setDataDirModalVisible(false);
@@ -381,12 +490,47 @@ function App() {
       message.success(`已成功修改爬取数据存放路径至 ${pendingDataDirMessage}`);
       setPendingDataDirMessage('');
     }
+    setDataDirUndoPath('');
   }, [pendingDataDirMessage]);
 
-  const handleDownloadDirModalCancel = useCallback(() => {
-    setDownloadDirModalVisible(false);
-    setPendingDownloadDirMessage('');
-  }, []);
+  const attemptRevertDownloadDirectory = useCallback(async () => {
+    if (!downloadDirUndoPath) {
+      return true;
+    }
+    if (!canRollbackDownloadDir || !electronAPI || typeof electronAPI.updateDownloadDirectory !== 'function') {
+      message.warning('当前运行环境暂不支持撤销下载路径修改');
+      return false;
+    }
+    setRevertingDownloadDir(true);
+    try {
+      const result = await electronAPI.updateDownloadDirectory(downloadDirUndoPath);
+      if (!result || !result.success) {
+        message.error((result && result.error) || '撤销下载路径失败');
+        return false;
+      }
+      const restoredPath = result.path || downloadDirUndoPath;
+      setDownloadDirPath(restoredPath);
+      setPendingDownloadDirMessage('');
+      setDownloadDirUndoPath('');
+      return true;
+    } catch (error) {
+      message.error(`撤销下载路径失败：${error.message}`);
+      return false;
+    } finally {
+      setRevertingDownloadDir(false);
+    }
+  }, [downloadDirUndoPath, canRollbackDownloadDir, electronAPI]);
+
+  const handleDownloadDirModalCancel = useCallback(async () => {
+    if (changingDownloadDir || revertingDownloadDir) {
+      return;
+    }
+    const success = await attemptRevertDownloadDirectory();
+    if (success) {
+      setDownloadDirModalVisible(false);
+      setPendingDownloadDirMessage('');
+    }
+  }, [attemptRevertDownloadDirectory, changingDownloadDir, revertingDownloadDir]);
 
   const handleDownloadDirModalConfirm = useCallback(() => {
     setDownloadDirModalVisible(false);
@@ -394,6 +538,7 @@ function App() {
       message.success(`已成功修改下载论文存放路径至 ${pendingDownloadDirMessage}`);
       setPendingDownloadDirMessage('');
     }
+    setDownloadDirUndoPath('');
   }, [pendingDownloadDirMessage]);
 
   // 通用保存函数
@@ -1341,6 +1486,7 @@ function App() {
       message.warning('当前运行环境暂不支持修改 data 路径');
       return;
     }
+    const previousPath = effectiveDataDirPath || '';
     setChangingDataDir(true);
     try {
       const result = await electronAPI.pickDataDirectory();
@@ -1359,6 +1505,11 @@ function App() {
         finalPath = await fetchDataDirectoryPath();
       }
       setPendingDataDirMessage(finalPath || '');
+      if (finalPath && previousPath && finalPath !== previousPath) {
+        setDataDirUndoPath(previousPath);
+      } else if (!finalPath || finalPath === previousPath) {
+        setDataDirUndoPath('');
+      }
     } catch (error) {
       message.error(`更新 data 路径失败：${error.message}`);
     } finally {
@@ -1371,6 +1522,7 @@ function App() {
       message.warning('当前运行环境暂不支持修改下载路径');
       return;
     }
+    const previousPath = effectiveDownloadDirPath || '';
     setChangingDownloadDir(true);
     try {
       const result = await electronAPI.pickDownloadDirectory();
@@ -1389,6 +1541,11 @@ function App() {
         finalPath = await fetchDownloadDirectoryPath();
       }
       setPendingDownloadDirMessage(finalPath || '');
+      if (finalPath && previousPath && finalPath !== previousPath) {
+        setDownloadDirUndoPath(previousPath);
+      } else if (!finalPath || finalPath === previousPath) {
+        setDownloadDirUndoPath('');
+      }
     } catch (error) {
       message.error(`更新下载路径失败：${error.message}`);
     } finally {
@@ -1470,6 +1627,7 @@ function App() {
     setSimpleVersion(v => v + 1);
     setPapers([]);
     setError(null);
+    setSimpleHasContent(false);
     message.info('已清空搜索条件');
   };
 
@@ -1481,6 +1639,7 @@ function App() {
     setAdvancedVersion(v => v + 1);
     setPapers([]);
     setError(null);
+    setAdvancedHasContent(false);
     message.info('已清空搜索条件');
   };
 
@@ -1618,37 +1777,39 @@ function App() {
     setBatchDownloading(true);
     try {
       const result = await electronAPI.downloadPapers({ items });
-      if (!result || result.success === false) {
-        const errorMsg = (result && result.error) || '批量下载失败';
-        message.error(errorMsg);
-        if (result && Array.isArray(result.failed) && result.failed.length > 0) {
-          const failedKeys = result.failed.map((item) => item.rowKey).filter(Boolean);
-          if (failedKeys.length > 0) {
-            setSelectedPaperKeys(failedKeys);
-          }
-        }
+      if (!result) {
+        message.error('批量下载失败');
         return;
       }
 
       const successCount = Array.isArray(result.downloaded) ? result.downloaded.length : 0;
-      const failedCount = Array.isArray(result.failed) ? result.failed.length : 0;
+      const failedItems = Array.isArray(result.failed) ? result.failed : [];
+      const failedCount = failedItems.length;
 
       if (successCount > 0) {
         message.success(`成功下载 ${successCount} 篇论文，已保存至 ${result.directory || targetDir}`);
       }
 
       if (failedCount > 0) {
-        const failedTitles = result.failed
-          .map((item) => item.title || item.id || item.rowKey)
+        const failedDetails = failedItems
+          .map((item) => {
+            const label = item.title || item.id || item.rowKey || '未知论文';
+            return item.error ? `${label}（${item.error}）` : label;
+          })
           .filter(Boolean)
           .join('、');
-        message.warning(`有 ${failedCount} 篇论文下载失败：${failedTitles}`);
-        const failedKeys = result.failed.map((item) => item.rowKey).filter(Boolean);
+        message.warning(`有 ${failedCount} 篇论文下载失败：${failedDetails}`);
+        const failedKeys = failedItems.map((item) => item.rowKey).filter(Boolean);
         if (failedKeys.length > 0) {
           setSelectedPaperKeys(failedKeys);
         }
       } else {
         setSelectedPaperKeys([]);
+      }
+
+      if (successCount === 0) {
+        const errorMsg = result.error || '选中的论文均下载失败，请检查链接后重试';
+        message.error(errorMsg);
       }
     } catch (error) {
       message.error(`下载失败：${error.message}`);
@@ -1786,6 +1947,7 @@ function App() {
                     // 使用 ref 保存 DOM 引用，构建查询时直接读取 value
                     key={`keyword-input-${condition.id}-${simpleVersion}`}
                     defaultValue={condition.keyword}
+                    onChange={handleSimpleKeywordInputChange}
                     onBlur={(e) => {
                       updateCondition(condition.id, 'keyword', e.target.value || '');
                     }}
@@ -1883,6 +2045,7 @@ function App() {
             icon={<ClearOutlined />}
             onClick={clearSimpleSearch}
             size="large"
+            disabled={!simpleHasContent}
           >
             清空
           </Button>
@@ -1904,6 +2067,7 @@ function App() {
             placeholder="例如: ti:LLM AND cat:cs.AI OR au:Smith"
             rows={3}
             allowClear
+            onChange={handleAdvancedQueryInputChange}
             onBlur={(e) => {
               const value = e.target.value || '';
               setAdvancedQuery((prev) => (prev === value ? prev : value));
@@ -1972,6 +2136,7 @@ function App() {
             icon={<ClearOutlined />}
             onClick={clearAdvancedSearch}
             size="large"
+            disabled={!advancedHasContent}
           >
             清空
           </Button>
@@ -2467,10 +2632,19 @@ function App() {
       <div className="app-container">
         <div className="app-header">
           <div className="app-header-info">
-            <Title level={2} className="app-title">
-              🎨 Design Thesis Retrieval
-            </Title>
-            <Text className="app-subtitle">欢迎使用设计论文检索应用</Text>
+            <div className="app-logo">
+              <img
+                src="build/icons/new.png"
+                alt="Design Thesis Retrieval logo"
+                className="app-logo-image"
+              />
+              <div className="app-logo-text">
+                <Title level={2} className="app-title">
+                  Design Thesis Retrieval
+                </Title>
+                <Text className="app-subtitle">欢迎使用设计论文检索应用</Text>
+              </div>
+            </div>
           </div>
           <div className="app-header-actions">
             <Dropdown
@@ -2484,7 +2658,7 @@ function App() {
                 loading={changingDataDir || changingDownloadDir}
                 disabled={!canViewAnyDir}
               >
-                Setting
+                设置
               </Button>
             </Dropdown>
           </div>
@@ -2519,6 +2693,9 @@ function App() {
         title="爬取数据存放路径"
         visible={dataDirModalVisible}
         onCancel={handleDataDirModalCancel}
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
         footer={null}
         destroyOnClose
       >
@@ -2567,16 +2744,24 @@ function App() {
               }}
             >
               <Button
+                danger
+                onClick={handleDataDirModalCancel}
+                loading={revertingDataDir}
+                disabled={changingDataDir || revertingDataDir}
+              >
+                取消
+              </Button>
+              <Button
                 onClick={handleChangeDataDirectory}
                 loading={changingDataDir}
-                disabled={!canChangeDataDir}
+                disabled={!canChangeDataDir || changingDataDir || revertingDataDir}
               >
                 修改路径
               </Button>
               <Button
                 type="primary"
                 onClick={handleDataDirModalConfirm}
-                disabled={dataDirModalLoading || changingDataDir}
+                disabled={dataDirModalLoading || changingDataDir || revertingDataDir}
               >
                 确定
               </Button>
@@ -2593,6 +2778,9 @@ function App() {
         title="下载论文存放路径"
         visible={downloadDirModalVisible}
         onCancel={handleDownloadDirModalCancel}
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
         footer={null}
         destroyOnClose
       >
@@ -2641,16 +2829,24 @@ function App() {
               }}
             >
               <Button
+                danger
+                onClick={handleDownloadDirModalCancel}
+                loading={revertingDownloadDir}
+                disabled={changingDownloadDir || revertingDownloadDir}
+              >
+                取消
+              </Button>
+              <Button
                 onClick={handleChangeDownloadDirectory}
                 loading={changingDownloadDir}
-                disabled={!canChangeDownloadDir}
+                disabled={!canChangeDownloadDir || changingDownloadDir || revertingDownloadDir}
               >
                 修改路径
               </Button>
               <Button
                 type="primary"
                 onClick={handleDownloadDirModalConfirm}
-                disabled={downloadDirModalLoading || changingDownloadDir}
+                disabled={downloadDirModalLoading || changingDownloadDir || revertingDownloadDir}
               >
                 确定
               </Button>
