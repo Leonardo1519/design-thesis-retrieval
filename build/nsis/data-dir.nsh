@@ -79,12 +79,14 @@ AllowRootDirInstall true
   ${EndIf}
 
   ${If} $SelectedDataDir != ""
+    IfSilent skipDeleteData
     MessageBox MB_ICONQUESTION|MB_YESNO "是否要删除爬取数据 json 文件？$\n$SelectedDataDir" IDNO skipDeleteData
     RMDir /r "$SelectedDataDir"
     skipDeleteData:
   ${EndIf}
 
   ${If} $SelectedDownloadDir != ""
+    IfSilent skipDeleteDownload
     MessageBox MB_ICONQUESTION|MB_YESNO "是否要删除下载论文文件？$\n$SelectedDownloadDir" IDNO skipDeleteDownload
     RMDir /r "$SelectedDownloadDir"
     skipDeleteDownload:

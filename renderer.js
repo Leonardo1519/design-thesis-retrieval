@@ -1749,7 +1749,7 @@ function App() {
             size="small"
             title={index === 0 ? '搜索条件' : `条件 ${index + 1}`}
             extra={
-              conditions.length > 1 && index > 0 && (
+              conditions.length > 1 && (
                 <Button
                   type="text"
                   danger
