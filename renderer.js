@@ -1,4 +1,4 @@
-const { useState, useEffect, useCallback, useRef } = React;
+const { useState, useEffect, useCallback, useRef, useMemo } = React;
 const { 
   Card, 
   Tabs, 
@@ -20,6 +20,7 @@ const {
   Modal,
   Dropdown,
   Menu,
+  Radio,
   message
 } = antd;
 const { Title, Text, Paragraph } = Typography;
@@ -40,7 +41,8 @@ const IconComponent = ({ name, ...props }) => {
     FileTextOutlined: '📄',
     CalendarOutlined: '📅',
     UserOutlined: '👤',
-    SettingOutlined: '⚙️'
+    SettingOutlined: '⚙️',
+    DownloadOutlined: '⬇️'
   };
   return <span {...props} style={{ display: 'inline-block', ...props.style }}>{iconMap[name] || '•'}</span>;
 };
@@ -53,6 +55,15 @@ const FileTextOutlined = (props) => <IconComponent name="FileTextOutlined" {...p
 const CalendarOutlined = (props) => <IconComponent name="CalendarOutlined" {...props} />;
 const UserOutlined = (props) => <IconComponent name="UserOutlined" {...props} />;
 const SettingOutlined = (props) => <IconComponent name="SettingOutlined" {...props} />;
+const DownloadOutlined = (props) => <IconComponent name="DownloadOutlined" {...props} />;
+
+// 生成一个默认的搜索条件对象
+const createEmptyCondition = () => ({
+  id: Date.now() + Math.random(),
+  type: 'all',
+  keyword: '',
+  operator: 'AND'
+});
 
 // 主应用组件
 function App() {
@@ -83,24 +94,52 @@ function App() {
 
   // 已保存搜索条件（设置页使用）
   const [savedSearches, setSavedSearches] = useState([]);
+  const [savedSearchSort, setSavedSearchSort] = useState('created-desc');
   // 保存弹窗状态
   const [saveModalVisible, setSaveModalVisible] = useState(false);
   const [pendingSavePayload, setPendingSavePayload] = useState(null);
   const [saveModalName, setSaveModalName] = useState('');
   const [saveModalError, setSaveModalError] = useState('');
-  const [renameModalVisible, setRenameModalVisible] = useState(false);
-  const [renameTarget, setRenameTarget] = useState(null);
-  const [renameName, setRenameName] = useState('');
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  const [editName, setEditName] = useState('');
   const [editConditions, setEditConditions] = useState([]);
+  const [editNameError, setEditNameError] = useState('');
   const [editMaxResults, setEditMaxResults] = useState('');
   const [editQuery, setEditQuery] = useState('');
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [createStep, setCreateStep] = useState('type');
+  const [createType, setCreateType] = useState(null);
+  const [createConditions, setCreateConditions] = useState(() => [createEmptyCondition()]);
+  const [createMaxResults, setCreateMaxResults] = useState('');
+  const [createQuery, setCreateQuery] = useState('');
+  const [createName, setCreateName] = useState('');
   const [crawlLoadingId, setCrawlLoadingId] = useState(null);
   const [changingDataDir, setChangingDataDir] = useState(false);
+  const [changingDownloadDir, setChangingDownloadDir] = useState(false);
+  const [dataDirPath, setDataDirPath] = useState('');
+  const [downloadDirPath, setDownloadDirPath] = useState('');
+  const [dataDirModalVisible, setDataDirModalVisible] = useState(false);
+  const [downloadDirModalVisible, setDownloadDirModalVisible] = useState(false);
+  const [dataDirModalLoading, setDataDirModalLoading] = useState(false);
+  const [downloadDirModalLoading, setDownloadDirModalLoading] = useState(false);
+  const [pendingDataDirMessage, setPendingDataDirMessage] = useState('');
+  const [pendingDownloadDirMessage, setPendingDownloadDirMessage] = useState('');
+  const [selectedPaperKeys, setSelectedPaperKeys] = useState([]);
+  const [batchDownloading, setBatchDownloading] = useState(false);
+  const [tablePagination, setTablePagination] = useState({
+    current: 1,
+    pageSize: 20
+  });
   const electronAPI = typeof window !== 'undefined' ? window.electronAPI : null;
   const canPersistData = !!(electronAPI && typeof electronAPI.savePapers === 'function');
+  const canViewDataDir = !!(electronAPI && typeof electronAPI.getDataDirectory === 'function');
+  const canViewDownloadDir = !!(electronAPI && typeof electronAPI.getDownloadDirectory === 'function');
   const canChangeDataDir = !!(electronAPI && typeof electronAPI.pickDataDirectory === 'function');
+  const canChangeDownloadDir = !!(electronAPI && typeof electronAPI.pickDownloadDirectory === 'function');
+  const canDownloadPapers = !!(electronAPI && typeof electronAPI.downloadPapers === 'function');
+  const canViewAnyDir = canViewDataDir || canViewDownloadDir;
+  const canChangeAnyDir = canChangeDataDir || canChangeDownloadDir;
 
   // 关键输入框的 ref
   const simpleKeywordRefs = useRef({});
@@ -124,6 +163,7 @@ function App() {
   // --- 本地存储：保存 / 加载 搜索条件 ---
 
   const STORAGE_KEY = 'designThesisSavedSearches';
+  const STORAGE_SORT_KEY = 'designThesisSavedSearchSort';
 
   // 初始化时从 localStorage 读取
   useEffect(() => {
@@ -139,6 +179,31 @@ function App() {
       console.error('读取本地保存搜索条件失败:', e);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      const storedSortType = window.localStorage.getItem(STORAGE_SORT_KEY);
+      if (storedSortType) {
+        setSavedSearchSort(storedSortType);
+      }
+    } catch (e) {
+      console.error('读取搜索排序偏好失败:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(STORAGE_SORT_KEY, savedSearchSort);
+    } catch (e) {
+      console.error('保存搜索排序偏好失败:', e);
+    }
+  }, [savedSearchSort]);
 
   useEffect(() => {
     if (!simpleMaxFocused || !simpleMaxResultsRef.current) return;
@@ -166,6 +231,23 @@ function App() {
     });
   }, [advancedMaxResults, advancedMaxFocused]);
 
+  useEffect(() => {
+    setSelectedPaperKeys([]);
+  }, [papers]);
+
+  useEffect(() => {
+    if (mode === 'settings') {
+      setSelectedPaperKeys([]);
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    setTablePagination((prev) => ({
+      ...prev,
+      current: 1
+    }));
+  }, [papers]);
+
   const normalizeMaxResultsValue = (value) => {
     const parsed = parseInt(value, 10);
     if (isNaN(parsed) || parsed < 1) {
@@ -173,6 +255,108 @@ function App() {
     }
     return Math.min(parsed, MAX_RESULTS_LIMIT);
   };
+
+  const fetchDataDirectoryPath = useCallback(async () => {
+    if (!canViewDataDir) {
+      return '';
+    }
+    try {
+      const result = await electronAPI.getDataDirectory();
+      if (result && result.success) {
+        const pathValue = result.path || '';
+        setDataDirPath(pathValue);
+        return pathValue;
+      }
+      if (result && result.error) {
+        message.error(result.error || '获取 data 路径失败');
+      }
+    } catch (error) {
+      message.error(`获取 data 路径失败：${error.message}`);
+    }
+    return '';
+  }, [canViewDataDir, electronAPI]);
+
+  const fetchDownloadDirectoryPath = useCallback(async () => {
+    if (!canViewDownloadDir) {
+      return '';
+    }
+    try {
+      const result = await electronAPI.getDownloadDirectory();
+      if (result && result.success) {
+        const pathValue = result.path || '';
+        setDownloadDirPath(pathValue);
+        return pathValue;
+      }
+      if (result && result.error) {
+        message.error(result.error || '获取下载路径失败');
+      }
+    } catch (error) {
+      message.error(`获取下载路径失败：${error.message}`);
+    }
+    return '';
+  }, [canViewDownloadDir, electronAPI]);
+
+  useEffect(() => {
+    if (!electronAPI) {
+      return;
+    }
+    fetchDataDirectoryPath();
+    fetchDownloadDirectoryPath();
+  }, [electronAPI, fetchDataDirectoryPath, fetchDownloadDirectoryPath]);
+
+  const openDataDirModal = useCallback(async () => {
+    if (!canViewDataDir) {
+      message.warning('当前运行环境暂不支持查看 data 路径');
+      return;
+    }
+    setDataDirModalVisible(true);
+    setDataDirModalLoading(true);
+    try {
+      await fetchDataDirectoryPath();
+    } finally {
+      setDataDirModalLoading(false);
+    }
+  }, [canViewDataDir, fetchDataDirectoryPath]);
+
+  const openDownloadDirModal = useCallback(async () => {
+    if (!canViewDownloadDir) {
+      message.warning('当前运行环境暂不支持查看下载路径');
+      return;
+    }
+    setDownloadDirModalVisible(true);
+    setDownloadDirModalLoading(true);
+    try {
+      await fetchDownloadDirectoryPath();
+    } finally {
+      setDownloadDirModalLoading(false);
+    }
+  }, [canViewDownloadDir, fetchDownloadDirectoryPath]);
+
+  const handleDataDirModalCancel = useCallback(() => {
+    setDataDirModalVisible(false);
+    setPendingDataDirMessage('');
+  }, []);
+
+  const handleDataDirModalConfirm = useCallback(() => {
+    setDataDirModalVisible(false);
+    if (pendingDataDirMessage) {
+      message.success(`已成功修改爬取数据存放路径至 ${pendingDataDirMessage}`);
+      setPendingDataDirMessage('');
+    }
+  }, [pendingDataDirMessage]);
+
+  const handleDownloadDirModalCancel = useCallback(() => {
+    setDownloadDirModalVisible(false);
+    setPendingDownloadDirMessage('');
+  }, []);
+
+  const handleDownloadDirModalConfirm = useCallback(() => {
+    setDownloadDirModalVisible(false);
+    if (pendingDownloadDirMessage) {
+      message.success(`已成功修改下载论文存放路径至 ${pendingDownloadDirMessage}`);
+      setPendingDownloadDirMessage('');
+    }
+  }, [pendingDownloadDirMessage]);
 
   // 通用保存函数
   const saveSearch = (type, data, name) => {
@@ -260,6 +444,28 @@ function App() {
     }
   };
 
+  const handleEditNameInputChange = (e) => {
+    const value = e.target.value;
+    setEditName(value);
+    if (!editTarget) {
+      setEditNameError('');
+      return;
+    }
+    const trimmed = (value || '').trim();
+    if (!trimmed) {
+      setEditNameError('');
+      return;
+    }
+    const isDuplicate = savedSearches.some(
+      (item) => item.id !== editTarget.id && item.name === trimmed
+    );
+    if (isDuplicate) {
+      setEditNameError('已存在相同名称的搜索设置，请使用不同名称命名');
+    } else {
+      setEditNameError('');
+    }
+  };
+
   const deleteSavedSearch = (id) => {
     setSavedSearches((prev) => {
       const updated = prev.filter((item) => item.id !== id);
@@ -273,81 +479,168 @@ function App() {
     message.success('已删除保存的搜索条件');
   };
 
-  const renameSavedSearch = (id, newName) => {
-    const trimmedName = (newName || '').trim();
-    if (!trimmedName) {
-      message.error('请输入搜索条件名称');
-      return false;
+  const resetCreateForm = () => {
+    setCreateStep('type');
+    setCreateType(null);
+    setCreateConditions([createEmptyCondition()]);
+    setCreateMaxResults('');
+    setCreateQuery('');
+    setCreateName('');
+  };
+
+  const openCreateModal = () => {
+    resetCreateForm();
+    setCreateModalVisible(true);
+  };
+
+  const closeCreateModal = () => {
+    setCreateModalVisible(false);
+    resetCreateForm();
+  };
+
+  const handleCreateTypeSelect = (value) => {
+    setCreateType(value);
+    setCreateMaxResults('');
+    if (value === 'simple') {
+      setCreateConditions([createEmptyCondition()]);
+      setCreateQuery('');
+    } else if (value === 'advanced') {
+      setCreateQuery('');
     }
+  };
 
-    let renamed = false;
-    setSavedSearches((prev) => {
-      const updated = prev.map((item) => {
-        if (item.id === id) {
-          renamed = true;
-          return {
-            ...item,
-            name: trimmedName,
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return item;
-      });
+  const addCreateCondition = () => {
+    setCreateConditions((prev) => [...prev, createEmptyCondition()]);
+  };
 
-      if (!renamed) {
-        message.error('未找到对应的搜索条件');
+  const removeCreateCondition = (id) => {
+    setCreateConditions((prev) => {
+      if (prev.length <= 1) {
+        message.warning('至少保留一个搜索条件');
         return prev;
       }
+      return prev.filter((item) => item.id !== id);
+    });
+  };
 
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      } catch (e) {
-        console.error('更新本地保存搜索条件失败:', e);
-        message.error('更新本地存储失败，请稍后重试');
+  const updateCreateCondition = (id, field, value) => {
+    setCreateConditions((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
+    );
+  };
+
+  const handleCreateModalOk = () => {
+    if (createStep === 'type') {
+      if (!createType) {
+        message.warning('请选择搜索类型');
+        return;
+      }
+      setCreateStep('form');
+      return;
+    }
+
+    if (!createType) {
+      message.error('请选择搜索类型');
+      return;
+    }
+
+    const trimmedName = (createName || '').trim();
+    if (!trimmedName) {
+      message.error('请输入搜索设置名称');
+      return;
+    }
+    const isDuplicate = savedSearches.some((item) => item.name === trimmedName);
+    if (isDuplicate) {
+      message.error('已存在相同名称的搜索设置，请使用不同名称命名新设置');
+      return;
+    }
+
+    const normalizedMax = normalizeMaxResultsValue(createMaxResults);
+    if (normalizedMax === null) {
+      message.error('请填写有效的结果数量');
+      return;
+    }
+
+    if (createType === 'simple') {
+      const sanitized = createConditions
+        .map((condition, index) => ({
+          id: condition.id ?? index,
+          type: condition.type || 'all',
+          keyword: (condition.keyword || '').trim(),
+          operator: index === 0 ? 'AND' : (condition.operator || 'AND')
+        }))
+        .filter((condition) => condition.keyword !== '');
+
+      if (sanitized.length === 0) {
+        message.error('请至少填写一个关键词');
+        return;
       }
 
-      message.success('搜索名称已更新');
-      return updated;
-    });
+      const success = saveSearch(
+        'simple',
+        {
+          conditions: sanitized,
+          maxResults: normalizedMax
+        },
+        trimmedName
+      );
+      if (success) {
+        closeCreateModal();
+      }
+    } else {
+      const queryText = (createQuery || '').trim();
+      if (!queryText) {
+        message.error('请输入搜索查询');
+        return;
+      }
 
-    return renamed;
-  };
-
-  const openRenameModal = (item) => {
-    setRenameTarget(item);
-    setRenameName(item?.name || '');
-    setRenameModalVisible(true);
-  };
-
-  const closeRenameModal = () => {
-    setRenameModalVisible(false);
-    setRenameTarget(null);
-    setRenameName('');
-  };
-
-  const handleRenameModalOk = () => {
-    if (!renameTarget) return;
-    const success = renameSavedSearch(renameTarget.id, renameName);
-    if (success) {
-      closeRenameModal();
+      const success = saveSearch(
+        'advanced',
+        {
+          query: queryText,
+          maxResults: normalizedMax
+        },
+        trimmedName
+      );
+      if (success) {
+        closeCreateModal();
+      }
     }
   };
 
-  const handleRenameModalCancel = () => {
-    closeRenameModal();
+  const renderCreateModalFooter = () => {
+    if (!createModalVisible) {
+      return null;
+    }
+    if (createStep === 'type') {
+      return [
+        <Button key="cancel" onClick={closeCreateModal}>
+          取消
+        </Button>,
+        <Button key="next" type="primary" onClick={handleCreateModalOk}>
+          下一步
+        </Button>
+      ];
+    }
+    return [
+      <Button key="back" onClick={() => setCreateStep('type')}>
+        上一步
+      </Button>,
+      <Button key="cancel" onClick={closeCreateModal}>
+        取消
+      </Button>,
+      <Button key="save" type="primary" onClick={handleCreateModalOk}>
+        保存
+      </Button>
+    ];
   };
-
-  const getDefaultEditCondition = () => ({
-    id: Date.now() + Math.random(),
-    type: 'all',
-    keyword: '',
-    operator: 'AND'
-  });
 
   const openEditModal = (item) => {
     if (!item) return;
 
     setEditTarget(item);
+    setEditName(item?.name || '');
+    setEditNameError('');
     const max = item.data?.maxResults;
     setEditMaxResults(
       max === undefined || max === null || max === ''
@@ -358,7 +651,7 @@ function App() {
     if (item.type === 'simple') {
       const rawConditions = Array.isArray(item.data?.conditions) && item.data.conditions.length > 0
         ? item.data.conditions
-        : [getDefaultEditCondition()];
+        : [createEmptyCondition()];
       const normalized = rawConditions.map((condition, index) => ({
         id: condition.id ?? Date.now() + index,
         type: condition.type || 'all',
@@ -378,6 +671,8 @@ function App() {
   const closeEditModal = () => {
     setEditModalVisible(false);
     setEditTarget(null);
+    setEditName('');
+    setEditNameError('');
     setEditConditions([]);
     setEditMaxResults('');
     setEditQuery('');
@@ -386,7 +681,7 @@ function App() {
   const addEditCondition = () => {
     setEditConditions((prev) => [
       ...prev,
-      getDefaultEditCondition()
+      createEmptyCondition()
     ]);
   };
 
@@ -410,6 +705,24 @@ function App() {
 
   const handleEditModalOk = () => {
     if (!editTarget) return;
+
+    const trimmedName = (editName || '').trim();
+    if (!trimmedName) {
+      message.error('请输入搜索设置名称');
+      setEditNameError('');
+      return;
+    }
+
+    const duplicateMessage = '已存在相同名称的搜索设置，请使用不同名称命名';
+    const isDuplicateName = savedSearches.some(
+      (item) => item.id !== editTarget.id && item.name === trimmedName
+    );
+    if (isDuplicateName) {
+      setEditNameError(duplicateMessage);
+      message.error(duplicateMessage);
+      return;
+    }
+    setEditNameError('');
 
     const fallbackMax = editTarget.data?.maxResults ?? null;
     const normalizedMaxInput = normalizeMaxResultsValue(editMaxResults);
@@ -437,6 +750,7 @@ function App() {
 
       updatedItem = {
         ...editTarget,
+        name: trimmedName,
         data: {
           ...editTarget.data,
           conditions: sanitized,
@@ -453,6 +767,7 @@ function App() {
 
       updatedItem = {
         ...editTarget,
+        name: trimmedName,
         data: {
           ...editTarget.data,
           query: queryText,
@@ -754,6 +1069,50 @@ function App() {
     return sortedPapers;
   };
 
+  const sortSavedSearches = (searches = [], sortType = 'created-desc') => {
+    if (!Array.isArray(searches) || searches.length === 0) {
+      return [];
+    }
+
+    const getTimeValue = (value) => {
+      if (!value) return 0;
+      const time = new Date(value).getTime();
+      return Number.isNaN(time) ? 0 : time;
+    };
+
+    const sorted = [...searches];
+
+    switch (sortType) {
+      case 'created-asc':
+        sorted.sort((a, b) => getTimeValue(a.createdAt) - getTimeValue(b.createdAt));
+        break;
+      case 'updated-desc':
+        sorted.sort(
+          (a, b) =>
+            getTimeValue(b.updatedAt || b.createdAt) - getTimeValue(a.updatedAt || a.createdAt)
+        );
+        break;
+      case 'updated-asc':
+        sorted.sort(
+          (a, b) =>
+            getTimeValue(a.updatedAt || a.createdAt) - getTimeValue(b.updatedAt || b.createdAt)
+        );
+        break;
+      case 'name-asc':
+        sorted.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh', { sensitivity: 'base' }));
+        break;
+      case 'name-desc':
+        sorted.sort((a, b) => (b.name || '').localeCompare(a.name || '', 'zh', { sensitivity: 'base' }));
+        break;
+      case 'created-desc':
+      default:
+        sorted.sort((a, b) => getTimeValue(b.createdAt) - getTimeValue(a.createdAt));
+        break;
+    }
+
+    return sorted;
+  };
+
   // 处理简单搜索
   const handleSimpleSearch = async () => {
     // 在任何状态更新之前，先快照当前所有关键词输入框的内容
@@ -954,11 +1313,48 @@ function App() {
         message.error(result.error || '更新 data 路径失败');
         return;
       }
-      message.success(`data 路径已更新：${result.path}`);
+      const newPath = result.path || '';
+      let finalPath = newPath;
+      if (newPath) {
+        setDataDirPath(newPath);
+      } else {
+        finalPath = await fetchDataDirectoryPath();
+      }
+      setPendingDataDirMessage(finalPath || '');
     } catch (error) {
       message.error(`更新 data 路径失败：${error.message}`);
     } finally {
       setChangingDataDir(false);
+    }
+  };
+
+  const handleChangeDownloadDirectory = async () => {
+    if (!canChangeDownloadDir || !electronAPI || typeof electronAPI.pickDownloadDirectory !== 'function') {
+      message.warning('当前运行环境暂不支持修改下载路径');
+      return;
+    }
+    setChangingDownloadDir(true);
+    try {
+      const result = await electronAPI.pickDownloadDirectory();
+      if (!result || result.cancelled) {
+        return;
+      }
+      if (!result.success) {
+        message.error(result.error || '更新下载路径失败');
+        return;
+      }
+      const newPath = result.path || '';
+      let finalPath = newPath;
+      if (newPath) {
+        setDownloadDirPath(newPath);
+      } else {
+        finalPath = await fetchDownloadDirectoryPath();
+      }
+      setPendingDownloadDirMessage(finalPath || '');
+    } catch (error) {
+      message.error(`更新下载路径失败：${error.message}`);
+    } finally {
+      setChangingDownloadDir(false);
     }
   };
 
@@ -1117,29 +1513,157 @@ function App() {
   // 获取排序后的论文
   const sortedPapers = sortPapers(papers, sortType);
 
+  const handleBatchDownload = async () => {
+    if (!selectedPaperKeys || selectedPaperKeys.length === 0) {
+      message.warning('请选择至少一篇需要下载的论文');
+      return;
+    }
+    if (!canDownloadPapers || !electronAPI || typeof electronAPI.downloadPapers !== 'function') {
+      message.warning('当前运行环境暂不支持批量下载');
+      return;
+    }
+
+    const keyToPaper = new Map();
+    sortedPapers.forEach((paper, index) => {
+      keyToPaper.set(getPaperRowKey(paper, index), paper);
+    });
+
+    const items = [];
+    const missingPdfTitles = [];
+    const missingPaperKeys = [];
+
+    selectedPaperKeys.forEach((rowKey) => {
+      const paper = keyToPaper.get(rowKey);
+      if (!paper) {
+        missingPaperKeys.push(rowKey);
+        return;
+      }
+      const pdfUrl = getPaperPdfUrl(paper);
+      if (!pdfUrl) {
+        missingPdfTitles.push(paper.title || paper.id || rowKey);
+        return;
+      }
+      items.push({
+        rowKey,
+        id: paper.id,
+        title: paper.title,
+        published: paper.published,
+        downloadUrl: pdfUrl
+      });
+    });
+
+    if (missingPaperKeys.length > 0) {
+      setSelectedPaperKeys((prev) =>
+        prev.filter((key) => !missingPaperKeys.includes(key))
+      );
+      message.warning('部分选中的论文已失效，系统已自动移除');
+    }
+
+    if (missingPdfTitles.length > 0) {
+      message.warning(`以下论文缺少可用的 PDF 链接，已跳过：${missingPdfTitles.join('、')}`);
+    }
+
+    if (items.length === 0) {
+      message.error('当前选中的论文缺少有效的下载链接');
+      return;
+    }
+
+    let targetDir = downloadDirPath;
+    if (!targetDir) {
+      targetDir = await fetchDownloadDirectoryPath();
+    }
+    if (!targetDir) {
+      message.error('尚未配置下载论文存放路径，请在 Setting 中设置后再试');
+      return;
+    }
+
+    setBatchDownloading(true);
+    try {
+      const result = await electronAPI.downloadPapers({ items });
+      if (!result || result.success === false) {
+        const errorMsg = (result && result.error) || '批量下载失败';
+        message.error(errorMsg);
+        if (result && Array.isArray(result.failed) && result.failed.length > 0) {
+          const failedKeys = result.failed.map((item) => item.rowKey).filter(Boolean);
+          if (failedKeys.length > 0) {
+            setSelectedPaperKeys(failedKeys);
+          }
+        }
+        return;
+      }
+
+      const successCount = Array.isArray(result.downloaded) ? result.downloaded.length : 0;
+      const failedCount = Array.isArray(result.failed) ? result.failed.length : 0;
+
+      if (successCount > 0) {
+        message.success(`成功下载 ${successCount} 篇论文，已保存至 ${result.directory || targetDir}`);
+      }
+
+      if (failedCount > 0) {
+        const failedTitles = result.failed
+          .map((item) => item.title || item.id || item.rowKey)
+          .filter(Boolean)
+          .join('、');
+        message.warning(`有 ${failedCount} 篇论文下载失败：${failedTitles}`);
+        const failedKeys = result.failed.map((item) => item.rowKey).filter(Boolean);
+        if (failedKeys.length > 0) {
+          setSelectedPaperKeys(failedKeys);
+        }
+      } else {
+        setSelectedPaperKeys([]);
+      }
+    } catch (error) {
+      message.error(`下载失败：${error.message}`);
+    } finally {
+      setBatchDownloading(false);
+    }
+  };
+
+  const handleTableChange = (pagination) => {
+    const { current = 1, pageSize = 20 } = pagination || {};
+    setTablePagination({
+      current,
+      pageSize
+    });
+  };
+
   const settingsMenu = (
     <Menu
       onClick={({ key }) => {
         if (key === 'change-data-dir') {
-          handleChangeDataDirectory();
+          openDataDirModal();
+        } else if (key === 'change-download-dir') {
+          openDownloadDirModal();
         }
       }}
       style={{ borderRadius: 8 }}
     >
       <Menu.Item
         key="change-data-dir"
-        disabled={!canChangeDataDir || changingDataDir}
+        disabled={!canViewDataDir}
         style={{ whiteSpace: 'nowrap' }}
       >
         爬取数据存放路径
       </Menu.Item>
+      <Menu.Item
+        key="change-download-dir"
+        disabled={!canViewDownloadDir}
+        style={{ whiteSpace: 'nowrap' }}
+      >
+        下载论文存放路径
+      </Menu.Item>
     </Menu>
+  );
+
+  const sortedSavedSearches = useMemo(
+    () => sortSavedSearches(savedSearches, savedSearchSort),
+    [savedSearches, savedSearchSort]
   );
 
   // 常用条件 Tag 组件
   const SavedSearchTags = ({ filterType }) => {
     // filterType: 'simple' | 'advanced' | 'all'
-    const filteredSearches = savedSearches.filter((item) => {
+    const filteredSearches = sortedSavedSearches.filter((item) => {
       if (filterType === 'all') return true;
       return item.type === filterType;
     });
@@ -1259,7 +1783,7 @@ function App() {
           type="dashed"
           onClick={addCondition}
           icon={<PlusOutlined />}
-          block
+          style={{ alignSelf: 'flex-start', marginTop: -16, marginBottom: 12 }}
         >
           添加条件
         </Button>
@@ -1420,13 +1944,7 @@ function App() {
 
   // 设置页：展示和管理已保存的搜索条件
   const SettingsView = () => {
-    if (!savedSearches || savedSearches.length === 0) {
-      return (
-        <Card title="已保存的搜索条件">
-          <Empty description="暂无已保存的搜索条件" />
-        </Card>
-      );
-    }
+    const hasSavedSearches = sortedSavedSearches && sortedSavedSearches.length > 0;
 
     return (
       <Space direction="vertical" style={{ width: '100%' }} size="large">
@@ -1437,113 +1955,144 @@ function App() {
             showIcon
           />
         )}
-        <Card title="已保存的搜索条件">
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
-            {savedSearches.map((item) => {
-              const typeLabel = item.type === 'simple' ? '简单搜索' : '高级搜索';
-              return (
-                <Card
-                  key={item.id}
-                  size="small"
-                  type="inner"
-                  title={item.name}
-                  extra={
-                    <Space>
-                      <Text type="secondary">{typeLabel}</Text>
-                    </Space>
-                  }
-                >
-                  <div
-                    className="saved-search-meta-row"
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'nowrap',
-                      alignItems: 'center',
-                      gap: 16,
-                      width: '100%'
-                    }}
+        <Card
+          title="已保存的搜索条件"
+          extra={
+            <Space size="small" align="center">
+            <Space
+              size={4}
+              align="center"
+              style={{ display: 'flex', flexWrap: 'nowrap', minHeight: 36 }}
+            >
+              <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                排序方式：
+              </Text>
+              <Select
+                size="middle"
+                value={savedSearchSort}
+                onChange={setSavedSearchSort}
+                style={{ minWidth: 200 }}
+              >
+                  <Option value="created-desc">创建时间（最新优先）</Option>
+                  <Option value="created-asc">创建时间（最早优先）</Option>
+                  <Option value="updated-desc">更新时间（最新优先）</Option>
+                  <Option value="updated-asc">更新时间（最早优先）</Option>
+                  <Option value="name-asc">名称（A-Z）</Option>
+                  <Option value="name-desc">名称（Z-A）</Option>
+                </Select>
+              </Space>
+              <Button
+                type="primary"
+              size="middle"
+                icon={<PlusOutlined />}
+                onClick={openCreateModal}
+              >
+                新增搜索设置
+              </Button>
+            </Space>
+          }
+        >
+          {hasSavedSearches ? (
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              {sortedSavedSearches.map((item) => {
+                const typeLabel = item.type === 'simple' ? '简单搜索' : '高级搜索';
+                return (
+                  <Card
+                    key={item.id}
+                    size="small"
+                    type="inner"
+                    title={item.name}
+                    extra={
+                      <Space>
+                        <Text type="secondary">{typeLabel}</Text>
+                      </Space>
+                    }
                   >
                     <div
-                      className="saved-search-meta-info"
+                      className="saved-search-meta-row"
                       style={{
                         display: 'flex',
+                        flexWrap: 'nowrap',
                         alignItems: 'center',
                         gap: 16,
-                        flex: 1,
-                        minWidth: 280,
-                        flexWrap: 'nowrap',
-                        overflow: 'hidden'
+                        width: '100%'
                       }}
                     >
-                      {item.data?.query && (
-                        <Text
-                          type="secondary"
-                          style={{
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                          title={item.data.query}
-                        >
-                          查询：{item.data.query}
-                        </Text>
-                      )}
-                      {item.data?.conditions && (
+                      <div
+                        className="saved-search-meta-info"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 16,
+                          flex: 1,
+                          minWidth: 280,
+                          flexWrap: 'nowrap',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        {item.data?.query && (
+                          <Text
+                            type="secondary"
+                            style={{
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                            title={item.data.query}
+                          >
+                            查询：{item.data.query}
+                          </Text>
+                        )}
+                        {item.data?.conditions && (
+                          <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+                            条件数：{Array.isArray(item.data.conditions) ? item.data.conditions.length : 0}
+                          </Text>
+                        )}
                         <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
-                          条件数：{Array.isArray(item.data.conditions) ? item.data.conditions.length : 0}
+                          结果数量：{item.data?.maxResults ?? '未设置'}
                         </Text>
-                      )}
-                      <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
-                        结果数量：{item.data?.maxResults ?? '未设置'}
-                      </Text>
-                      <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
-                        创建时间：{formatDate(item.createdAt)}
-                      </Text>
-                    </div>
-                    <Space size="small" style={{ marginLeft: 'auto', flexShrink: 0 }}>
-                      {canPersistData && (
+                        <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+                          创建时间：{formatDate(item.createdAt)}
+                        </Text>
+                      </div>
+                      <Space size="small" style={{ marginLeft: 'auto', flexShrink: 0 }}>
+                        {canPersistData && (
+                          <Button
+                            size="small"
+                            loading={crawlLoadingId === item.id}
+                            onClick={() => crawlSavedSearch(item)}
+                          >
+                            爬取入库
+                          </Button>
+                        )}
                         <Button
-                          type="primary"
-                          ghost
                           size="small"
-                          loading={crawlLoadingId === item.id}
-                          onClick={() => crawlSavedSearch(item)}
+                          onClick={() => applySavedSearch(item)}
                         >
-                          爬取入库
+                          应用到搜索
                         </Button>
-                      )}
-                      <Button
-                        type="primary"
-                        size="small"
-                        onClick={() => applySavedSearch(item)}
-                      >
-                        应用到搜索
-                      </Button>
-                      <Button
-                        size="small"
-                        onClick={() => openEditModal(item)}
-                      >
-                        编辑
-                      </Button>
-                      <Button
-                        size="small"
-                        onClick={() => openRenameModal(item)}
-                      >
-                        重命名
-                      </Button>
-                      <Button
-                        danger
-                        size="small"
-                        onClick={() => deleteSavedSearch(item.id)}
-                      >
-                        删除
-                      </Button>
-                    </Space>
-                  </div>
-                </Card>
-              );
-            })}
-          </Space>
+                        <Button
+                          size="small"
+                          onClick={() => openEditModal(item)}
+                        >
+                          编辑
+                        </Button>
+                        <Button
+                          danger
+                          size="small"
+                          onClick={() => deleteSavedSearch(item.id)}
+                        >
+                          删除
+                        </Button>
+                      </Space>
+                    </div>
+                  </Card>
+                );
+              })}
+            </Space>
+          ) : (
+            <Empty description="暂无已保存的搜索条件" />
+          )}
         </Card>
       </Space>
     );
@@ -1554,6 +2103,33 @@ function App() {
     return paper.links.find(link => link.type === 'application/pdf')?.href || 
            paper.links.find(link => link.rel === 'related')?.href || 
            `https://arxiv.org/abs/${paper.id}`;
+  };
+
+  const getPaperPdfUrl = (paper = {}) => {
+    if (!paper) return '';
+    if (Array.isArray(paper.links)) {
+      const pdfLink = paper.links.find((link) =>
+        (link?.type || '').toLowerCase() === 'application/pdf'
+      );
+      if (pdfLink?.href) {
+        return pdfLink.href;
+      }
+    }
+    const paperId = (paper.id || '').replace(/^https?:\/\/arxiv\.org\/abs\//i, '');
+    if (paperId) {
+      return `https://arxiv.org/pdf/${paperId}.pdf`;
+    }
+    return '';
+  };
+
+  const getPaperRowKey = (paper, index) => {
+    if (paper?.id) {
+      return paper.id;
+    }
+    if (paper?.key) {
+      return paper.key;
+    }
+    return `paper-${index}`;
   };
 
   // 获取当前搜索条件的显示文本
@@ -1710,50 +2286,135 @@ function App() {
     const searchQuery = getCurrentSearchQuery();
 
     // 为表格数据添加搜索条件和唯一key
-    const tableData = sortedPapers.map((paper, index) => ({
-      ...paper,
-      key: paper.id || index,
-      searchQuery: searchQuery,
-    }));
+    const tableData = sortedPapers.map((paper, index) => {
+      const rowKey = getPaperRowKey(paper, index);
+      return {
+        ...paper,
+        key: rowKey,
+        rowKey,
+        searchQuery: searchQuery,
+      };
+    });
+
+    const allRowKeys = tableData.map((item) => item.key);
+
+    const rowSelection = {
+      selectedRowKeys: selectedPaperKeys,
+      onChange: (keys) => setSelectedPaperKeys(keys),
+      preserveSelectedRowKeys: true,
+      columnWidth: 56,
+      getCheckboxProps: () => ({
+        disabled: batchDownloading,
+      })
+    };
+
+    const downloadButtonElement = (
+      <Button
+        type="primary"
+        icon={<DownloadOutlined />}
+        onClick={handleBatchDownload}
+        disabled={!canDownloadPapers || selectedPaperKeys.length === 0 || batchDownloading}
+        loading={batchDownloading}
+      >
+        批量下载
+      </Button>
+    );
+
+    const downloadButtonNode = canDownloadPapers ? (
+      downloadButtonElement
+    ) : (
+      <Tooltip title="当前运行环境暂不支持批量下载">
+        <span style={{ display: 'inline-block' }}>{downloadButtonElement}</span>
+      </Tooltip>
+    );
 
     return (
       <div>
         <div className="results-header">
-          <div className="results-count">
-            <Text strong style={{ fontSize: '1.1em', color: '#667eea' }}>
-              {papers.length}
-            </Text>
-            <Text style={{ marginLeft: 4 }}>篇论文</Text>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div className="results-count">
+              <Text strong style={{ fontSize: '1.1em', color: '#667eea' }}>
+                {papers.length}
+              </Text>
+              <Text style={{ marginLeft: 4 }}>篇论文</Text>
+            </div>
+            {selectedPaperKeys.length > 0 && (
+              <Tag color="purple">已选 {selectedPaperKeys.length} 篇</Tag>
+            )}
+            {canDownloadPapers && (
+              <Tooltip title={downloadDirPath || '请前往 Setting 设置下载路径'}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  下载路径：{downloadDirPath || '尚未配置，请在 Setting 中设置'}
+                </Text>
+              </Tooltip>
+            )}
           </div>
-          <Space>
-            <Text type="secondary">排序方式：</Text>
-            <Select
-              value={sortType}
-              onChange={setSortType}
-              style={{ width: 200 }}
-            >
-              <Option value="date-desc">发布日期（最新优先）</Option>
-              <Option value="date-asc">发布日期（最早优先）</Option>
-              <Option value="title-asc">标题（A-Z）</Option>
-              <Option value="title-desc">标题（Z-A）</Option>
-              <Option value="author-asc">作者（A-Z）</Option>
-              <Option value="author-desc">作者（Z-A）</Option>
-              <Option value="updated-desc">更新时间（最新优先）</Option>
-              <Option value="updated-asc">更新时间（最早优先）</Option>
-            </Select>
-          </Space>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              flexWrap: 'wrap',
+              justifyContent: 'flex-end'
+            }}
+          >
+            {downloadButtonNode}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Button
+                onClick={() => setSelectedPaperKeys(allRowKeys)}
+                disabled={allRowKeys.length === 0}
+              >
+                全选
+              </Button>
+              <Button
+                onClick={() => setSelectedPaperKeys([])}
+                disabled={selectedPaperKeys.length === 0}
+              >
+                清空选择
+              </Button>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Text type="secondary">排序方式：</Text>
+              <Select
+                value={sortType}
+                onChange={setSortType}
+                style={{ width: 200 }}
+              >
+                <Option value="date-desc">发布日期（最新优先）</Option>
+                <Option value="date-asc">发布日期（最早优先）</Option>
+                <Option value="title-asc">标题（A-Z）</Option>
+                <Option value="title-desc">标题（Z-A）</Option>
+                <Option value="author-asc">作者（A-Z）</Option>
+                <Option value="author-desc">作者（Z-A）</Option>
+                <Option value="updated-desc">更新时间（最新优先）</Option>
+                <Option value="updated-asc">更新时间（最早优先）</Option>
+              </Select>
+            </div>
+          </div>
         </div>
         <Divider />
         <Table
           columns={tableColumns}
           dataSource={tableData}
+          rowSelection={rowSelection}
+          rowKey="key"
           pagination={{
+            current: tablePagination.current,
+            pageSize: tablePagination.pageSize,
             defaultPageSize: 20,
             pageSizeOptions: ['10', '20', '30', '50', '100'],
             showSizeChanger: true,
             showQuickJumper: true,
             showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条，共 ${total} 条`,
           }}
+          onChange={handleTableChange}
           scroll={{ x: 1000 }}
           size="middle"
           bordered
@@ -1778,12 +2439,12 @@ function App() {
               overlay={settingsMenu}
               trigger={['click']}
               placement="bottomRight"
-              disabled={!canChangeDataDir}
+              disabled={!canViewAnyDir}
             >
               <Button
                 icon={<SettingOutlined />}
-                loading={changingDataDir}
-                disabled={!canChangeDataDir}
+                loading={changingDataDir || changingDownloadDir}
+                disabled={!canViewAnyDir}
               >
                 Setting
               </Button>
@@ -1817,6 +2478,154 @@ function App() {
       </div>
 
       <Modal
+        title="爬取数据存放路径"
+        visible={dataDirModalVisible}
+        onCancel={handleDataDirModalCancel}
+        footer={null}
+        destroyOnClose
+      >
+        {dataDirModalLoading ? (
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <Spin tip="正在获取路径..." />
+          </div>
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <div>
+              <Text type="secondary">当前路径</Text>
+              {dataDirPath ? (
+                <Paragraph
+                  copyable={{ text: dataDirPath }}
+                  style={{
+                    background: '#fafafa',
+                    padding: '8px 12px',
+                    borderRadius: 4,
+                    marginBottom: 0
+                  }}
+                >
+                  {dataDirPath}
+                </Paragraph>
+              ) : (
+                <Paragraph
+                  style={{
+                    background: '#fafafa',
+                    padding: '8px 12px',
+                    borderRadius: 4,
+                    marginBottom: 0,
+                    color: '#999'
+                  }}
+                >
+                  尚未获取到路径
+                </Paragraph>
+              )}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                width: '100%',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+                gap: 12,
+                flexWrap: 'wrap'
+              }}
+            >
+              <Button
+                onClick={handleChangeDataDirectory}
+                loading={changingDataDir}
+                disabled={!canChangeDataDir}
+              >
+                修改路径
+              </Button>
+              <Button
+                type="primary"
+                onClick={handleDataDirModalConfirm}
+                disabled={dataDirModalLoading || changingDataDir}
+              >
+                确定
+              </Button>
+            </div>
+            {!canChangeDataDir && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                当前运行环境暂不支持修改路径
+              </Text>
+            )}
+          </Space>
+        )}
+      </Modal>
+      <Modal
+        title="下载论文存放路径"
+        visible={downloadDirModalVisible}
+        onCancel={handleDownloadDirModalCancel}
+        footer={null}
+        destroyOnClose
+      >
+        {downloadDirModalLoading ? (
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <Spin tip="正在获取路径..." />
+          </div>
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <div>
+              <Text type="secondary">当前路径</Text>
+              {downloadDirPath ? (
+                <Paragraph
+                  copyable={{ text: downloadDirPath }}
+                  style={{
+                    background: '#fafafa',
+                    padding: '8px 12px',
+                    borderRadius: 4,
+                    marginBottom: 0
+                  }}
+                >
+                  {downloadDirPath}
+                </Paragraph>
+              ) : (
+                <Paragraph
+                  style={{
+                    background: '#fafafa',
+                    padding: '8px 12px',
+                    borderRadius: 4,
+                    marginBottom: 0,
+                    color: '#999'
+                  }}
+                >
+                  尚未获取到路径
+                </Paragraph>
+              )}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                width: '100%',
+                justifyContent: 'flex-end',
+                alignItems: 'center',
+                gap: 12,
+                flexWrap: 'wrap'
+              }}
+            >
+              <Button
+                onClick={handleChangeDownloadDirectory}
+                loading={changingDownloadDir}
+                disabled={!canChangeDownloadDir}
+              >
+                修改路径
+              </Button>
+              <Button
+                type="primary"
+                onClick={handleDownloadDirModalConfirm}
+                disabled={downloadDirModalLoading || changingDownloadDir}
+              >
+                确定
+              </Button>
+            </div>
+            {!canChangeDownloadDir && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                当前运行环境暂不支持修改路径
+              </Text>
+            )}
+          </Space>
+        )}
+      </Modal>
+      <Modal
         title="保存搜索设置"
         visible={saveModalVisible}
         onOk={handleSaveModalOk}
@@ -1844,30 +2653,6 @@ function App() {
         </Space>
       </Modal>
       <Modal
-        title="重命名搜索条件"
-        visible={renameModalVisible}
-        onOk={handleRenameModalOk}
-        onCancel={handleRenameModalCancel}
-        okText="保存"
-        cancelText="取消"
-        destroyOnClose
-        maskClosable={false}
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Text type="secondary">
-            请输入新的搜索名称，方便快速识别。
-          </Text>
-          <Input
-            placeholder="输入新的搜索名称"
-            value={renameName}
-            onChange={(e) => setRenameName(e.target.value)}
-            onPressEnter={handleRenameModalOk}
-            maxLength={50}
-            autoFocus
-          />
-        </Space>
-      </Modal>
-      <Modal
         title={editTarget?.type === 'simple' ? '编辑简单搜索条件' : '编辑高级搜索条件'}
         visible={editModalVisible}
         onOk={handleEditModalOk}
@@ -1879,143 +2664,317 @@ function App() {
         width={760}
       >
         {editTarget ? (
-          editTarget.type === 'simple' ? (
-            <Space direction="vertical" style={{ width: '100%' }} size="large">
-              {editConditions.map((condition, index) => (
-                <Card
-                  key={condition.id}
-                  size="small"
-                  type="inner"
-                  title={`条件 ${index + 1}`}
-                  extra={
-                    editConditions.length > 1 && (
-                      <Button
-                        type="link"
-                        danger
-                        size="small"
-                        onClick={() => removeEditCondition(condition.id)}
-                      >
-                        删除
-                      </Button>
-                    )
-                  }
-                >
-                  <Row gutter={16}>
-                    <Col span={6}>
-                      <Text style={{ display: 'block', marginBottom: 8 }}>搜索类型</Text>
-                      <Select
-                        value={condition.type}
-                        onChange={(value) => updateEditCondition(condition.id, 'type', value)}
-                        style={{ width: '100%' }}
-                      >
-                        <Option value="all">全部字段</Option>
-                        <Option value="ti">标题</Option>
-                        <Option value="au">作者</Option>
-                        <Option value="abs">摘要</Option>
-                        <Option value="co">评论</Option>
-                        <Option value="jr">期刊参考</Option>
-                        <Option value="cat">分类</Option>
-                        <Option value="rn">报告编号</Option>
-                        <Option value="id">ID</Option>
-                      </Select>
-                    </Col>
-                    <Col span={index === 0 ? 18 : 12}>
-                      <Text style={{ display: 'block', marginBottom: 8 }}>关键词</Text>
-                      <Input
-                        value={condition.keyword}
-                        onChange={(e) => updateEditCondition(condition.id, 'keyword', e.target.value)}
-                        placeholder="输入关键词"
-                        allowClear
-                      />
-                    </Col>
-                    {index > 0 && (
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            <div>
+              <Text style={{ display: 'block', marginBottom: 8 }}>搜索设置名称</Text>
+              <Input
+                placeholder="请输入搜索设置名称"
+                value={editName}
+                onChange={handleEditNameInputChange}
+                maxLength={50}
+                allowClear
+                status={editNameError ? 'error' : undefined}
+              />
+              {editNameError && (
+                <Text type="danger" style={{ fontSize: 12 }}>
+                  {editNameError}
+                </Text>
+              )}
+            </div>
+            {editTarget.type === 'simple' ? (
+              <Space direction="vertical" style={{ width: '100%' }} size="large">
+                {editConditions.map((condition, index) => (
+                  <Card
+                    key={condition.id}
+                    size="small"
+                    type="inner"
+                    title={`条件 ${index + 1}`}
+                    extra={
+                      editConditions.length > 1 && (
+                        <Button
+                          type="link"
+                          danger
+                          size="small"
+                          onClick={() => removeEditCondition(condition.id)}
+                        >
+                          删除
+                        </Button>
+                      )
+                    }
+                  >
+                    <Row gutter={16}>
                       <Col span={6}>
-                        <Text style={{ display: 'block', marginBottom: 8 }}>逻辑关系</Text>
+                        <Text style={{ display: 'block', marginBottom: 8 }}>搜索类型</Text>
                         <Select
-                          value={condition.operator}
-                          onChange={(value) => updateEditCondition(condition.id, 'operator', value)}
+                          value={condition.type}
+                          onChange={(value) => updateEditCondition(condition.id, 'type', value)}
                           style={{ width: '100%' }}
                         >
-                          <Option value="AND">AND</Option>
-                          <Option value="OR">OR</Option>
-                          <Option value="ANDNOT">NOT</Option>
+                          <Option value="all">全部字段</Option>
+                          <Option value="ti">标题</Option>
+                          <Option value="au">作者</Option>
+                          <Option value="abs">摘要</Option>
+                          <Option value="co">评论</Option>
+                          <Option value="jr">期刊参考</Option>
+                          <Option value="cat">分类</Option>
+                          <Option value="rn">报告编号</Option>
+                          <Option value="id">ID</Option>
                         </Select>
                       </Col>
-                    )}
-                  </Row>
-                </Card>
-              ))}
-              <Button
-                type="dashed"
-                onClick={addEditCondition}
-                icon={<PlusOutlined />}
-                block
-              >
-                添加条件
-              </Button>
-              <div>
-                <Text style={{ display: 'block', marginBottom: 8 }}>结果数量</Text>
-                <Input
-                  type="number"
-                  min={1}
-                  max={MAX_RESULTS_LIMIT}
-                  value={editMaxResults}
-                  onChange={handleNumberChange(setEditMaxResults)}
-                  onBlur={() => {
-                    setEditMaxResults((prev) => {
-                      if (prev === '' || prev === null) {
-                        return '';
-                      }
-                      const normalized = normalizeMaxResultsValue(prev);
-                      return normalized === null ? '' : String(normalized);
-                    });
-                  }}
-                  allowClear
-                />
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-                  建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
-                </Text>
-              </div>
+                      <Col span={index === 0 ? 18 : 12}>
+                        <Text style={{ display: 'block', marginBottom: 8 }}>关键词</Text>
+                        <Input
+                          value={condition.keyword}
+                          onChange={(e) => updateEditCondition(condition.id, 'keyword', e.target.value)}
+                          placeholder="输入关键词"
+                          allowClear
+                        />
+                      </Col>
+                      {index > 0 && (
+                        <Col span={6}>
+                          <Text style={{ display: 'block', marginBottom: 8 }}>逻辑关系</Text>
+                          <Select
+                            value={condition.operator}
+                            onChange={(value) => updateEditCondition(condition.id, 'operator', value)}
+                            style={{ width: '100%' }}
+                          >
+                            <Option value="AND">AND</Option>
+                            <Option value="OR">OR</Option>
+                            <Option value="ANDNOT">NOT</Option>
+                          </Select>
+                        </Col>
+                      )}
+                    </Row>
+                  </Card>
+                ))}
+                <Button
+                  type="dashed"
+                  onClick={addEditCondition}
+                  icon={<PlusOutlined />}
+                  style={{ alignSelf: 'flex-start' }}
+                >
+                  添加条件
+                </Button>
+                <div>
+                  <Text style={{ display: 'block', marginBottom: 8 }}>结果数量</Text>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={MAX_RESULTS_LIMIT}
+                    value={editMaxResults}
+                    onChange={handleNumberChange(setEditMaxResults)}
+                    onBlur={() => {
+                      setEditMaxResults((prev) => {
+                        if (prev === '' || prev === null) {
+                          return '';
+                        }
+                        const normalized = normalizeMaxResultsValue(prev);
+                        return normalized === null ? '' : String(normalized);
+                      });
+                    }}
+                    allowClear
+                  />
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                    建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
+                  </Text>
+                </div>
+              </Space>
+            ) : (
+              <Space direction="vertical" style={{ width: '100%' }} size="large">
+                <div>
+                  <Text style={{ display: 'block', marginBottom: 8 }}>arXiv 搜索查询语法</Text>
+                  <Input.TextArea
+                    value={editQuery}
+                    onChange={(e) => setEditQuery(e.target.value)}
+                    rows={4}
+                    placeholder="例如: ti:LLM AND cat:cs.AI OR au:Smith"
+                    allowClear
+                  />
+                </div>
+                <div>
+                  <Text style={{ display: 'block', marginBottom: 8 }}>结果数量</Text>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={MAX_RESULTS_LIMIT}
+                    value={editMaxResults}
+                    onChange={handleNumberChange(setEditMaxResults)}
+                    onBlur={() => {
+                      setEditMaxResults((prev) => {
+                        if (prev === '' || prev === null) {
+                          return '';
+                        }
+                        const normalized = normalizeMaxResultsValue(prev);
+                        return normalized === null ? '' : String(normalized);
+                      });
+                    }}
+                    allowClear
+                  />
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                    建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
+                  </Text>
+                </div>
+              </Space>
+            )}
+          </Space>
+        ) : (
+          <Text type="secondary">请选择需要编辑的搜索条件</Text>
+        )}
+      </Modal>
+      <Modal
+        title="新增搜索设置"
+        visible={createModalVisible}
+        onCancel={closeCreateModal}
+        footer={renderCreateModalFooter()}
+        destroyOnClose
+        maskClosable={false}
+        width={760}
+      >
+        {createStep === 'type' ? (
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            <Text strong>请选择要新增的搜索设置类型</Text>
+            <Radio.Group
+              value={createType}
+              onChange={(e) => handleCreateTypeSelect(e.target.value)}
+              buttonStyle="solid"
+            >
+              <Radio.Button value="simple">简单搜索</Radio.Button>
+              <Radio.Button value="advanced">高级搜索</Radio.Button>
+            </Radio.Group>
+            <Text type="secondary">
+              选择类型后，点击“下一步”继续配置搜索条件。
+            </Text>
+          </Space>
+        ) : (
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            <Space
+              align="center"
+              style={{ width: '100%', justifyContent: 'space-between' }}
+            >
+              <Text strong>
+                {createType === 'simple' ? '简单搜索设置' : '高级搜索设置'}
+              </Text>
             </Space>
-          ) : (
-            <Space direction="vertical" style={{ width: '100%' }} size="large">
+            <div>
+              <Text style={{ display: 'block', marginBottom: 8 }}>搜索设置名称</Text>
+              <Input
+                placeholder="请输入搜索设置名称"
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                maxLength={50}
+              />
+            </div>
+            {createType === 'simple' ? (
+              <>
+                {createConditions.map((condition, index) => (
+                  <Card
+                    key={condition.id}
+                    size="small"
+                    type="inner"
+                    title={`条件 ${index + 1}`}
+                    extra={
+                      createConditions.length > 1 && (
+                        <Button
+                          type="link"
+                          danger
+                          size="small"
+                          onClick={() => removeCreateCondition(condition.id)}
+                        >
+                          删除
+                        </Button>
+                      )
+                    }
+                  >
+                    <Row gutter={16}>
+                      <Col span={6}>
+                        <Text style={{ display: 'block', marginBottom: 8 }}>搜索类型</Text>
+                        <Select
+                          value={condition.type}
+                          onChange={(value) => updateCreateCondition(condition.id, 'type', value)}
+                          style={{ width: '100%' }}
+                        >
+                          <Option value="all">全部字段</Option>
+                          <Option value="ti">标题</Option>
+                          <Option value="au">作者</Option>
+                          <Option value="abs">摘要</Option>
+                          <Option value="co">评论</Option>
+                          <Option value="jr">期刊参考</Option>
+                          <Option value="cat">分类</Option>
+                          <Option value="rn">报告编号</Option>
+                          <Option value="id">ID</Option>
+                        </Select>
+                      </Col>
+                      <Col span={index === 0 ? 18 : 12}>
+                        <Text style={{ display: 'block', marginBottom: 8 }}>关键词</Text>
+                        <Input
+                          value={condition.keyword}
+                          onChange={(e) => updateCreateCondition(condition.id, 'keyword', e.target.value)}
+                          placeholder="输入关键词"
+                          allowClear
+                        />
+                      </Col>
+                      {index > 0 && (
+                        <Col span={6}>
+                          <Text style={{ display: 'block', marginBottom: 8 }}>逻辑关系</Text>
+                          <Select
+                            value={condition.operator}
+                            onChange={(value) => updateCreateCondition(condition.id, 'operator', value)}
+                            style={{ width: '100%' }}
+                          >
+                            <Option value="AND">AND</Option>
+                            <Option value="OR">OR</Option>
+                            <Option value="ANDNOT">NOT</Option>
+                          </Select>
+                        </Col>
+                      )}
+                    </Row>
+                  </Card>
+                ))}
+                <Button
+                  type="dashed"
+                  onClick={addCreateCondition}
+                  icon={<PlusOutlined />}
+                  style={{ alignSelf: 'flex-start' }}
+                >
+                  添加条件
+                </Button>
+              </>
+            ) : (
               <div>
                 <Text style={{ display: 'block', marginBottom: 8 }}>arXiv 搜索查询语法</Text>
                 <Input.TextArea
-                  value={editQuery}
-                  onChange={(e) => setEditQuery(e.target.value)}
+                  value={createQuery}
+                  onChange={(e) => setCreateQuery(e.target.value)}
                   rows={4}
                   placeholder="例如: ti:LLM AND cat:cs.AI OR au:Smith"
                   allowClear
                 />
               </div>
-              <div>
-                <Text style={{ display: 'block', marginBottom: 8 }}>结果数量</Text>
-                <Input
-                  type="number"
-                  min={1}
-                  max={MAX_RESULTS_LIMIT}
-                  value={editMaxResults}
-                  onChange={handleNumberChange(setEditMaxResults)}
-                  onBlur={() => {
-                    setEditMaxResults((prev) => {
-                      if (prev === '' || prev === null) {
-                        return '';
-                      }
-                      const normalized = normalizeMaxResultsValue(prev);
-                      return normalized === null ? '' : String(normalized);
-                    });
-                  }}
-                  allowClear
-                />
-                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-                  建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
-                </Text>
-              </div>
-            </Space>
-          )
-        ) : (
-          <Text type="secondary">请选择需要编辑的搜索条件</Text>
+            )}
+            <div>
+              <Text style={{ display: 'block', marginBottom: 8 }}>结果数量</Text>
+              <Input
+                type="number"
+                min={1}
+                max={MAX_RESULTS_LIMIT}
+                value={createMaxResults}
+                onChange={handleNumberChange(setCreateMaxResults)}
+                onBlur={() => {
+                  setCreateMaxResults((prev) => {
+                    if (prev === '' || prev === null) {
+                      return '';
+                    }
+                    const normalized = normalizeMaxResultsValue(prev);
+                    return normalized === null ? '' : String(normalized);
+                  });
+                }}
+                allowClear
+              />
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                建议每次检索论文数量不超过 {MAX_RESULTS_LIMIT}
+              </Text>
+            </div>
+          </Space>
         )}
       </Modal>
     </>
